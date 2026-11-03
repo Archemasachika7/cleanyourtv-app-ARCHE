@@ -13,12 +13,43 @@ index 3ceec7b4..06ab1c58 100644
      }
  
      buildTypes {
+diff --git a/launcher/app/src/main/AndroidManifest.xml b/launcher/app/src/main/AndroidManifest.xml
+index 701b5feb..0072eb40 100644
+--- a/launcher/app/src/main/AndroidManifest.xml
++++ b/launcher/app/src/main/AndroidManifest.xml
+@@ -25,6 +25,13 @@
+     <!-- Android 11+ package visibility: lets the launcher list the TV apps it shows as tiles, and the
+          apps that declare a module card (docs/specs/card.md). -->
+     <queries>
++        <!-- Arche fork: the AI and money apps an AiTiles tile opens and takes its real icon from, when installed. -->
++        <package android:name="com.anthropic.claude" />
++        <package android:name="com.openai.chatgpt" />
++        <package android:name="com.google.android.apps.bard" />
++        <package android:name="ai.perplexity.app.android" />
++        <package android:name="com.msf.angelmobile" />
++        <package android:name="com.nextbillion.groww" />
+         <!-- The standard settings handlers, so package visibility doesn't hide them and send the pills to a vendor fallback by mistake. -->
+         <intent>
+             <action android:name="android.settings.SETTINGS" />
+@@ -104,6 +111,12 @@
+             android:exported="false"
+             android:excludeFromRecents="true"
+             android:screenOrientation="landscape" />
++        <!-- Arche fork: the Arche extras page, opened from Launcher settings. -->
++        <activity
++            android:name=".ArcheSettingsActivity"
++            android:exported="false"
++            android:excludeFromRecents="true"
++            android:screenOrientation="landscape" />
+         <!-- The system input switcher (com.android.tv.action.VIEW_INPUTS), which is what the remote's Input
+              button becomes through the TV's Live TV app or InputKeyService. Disabled here and switched on by
+              MainActivity only while handle_view_inputs is true (config.xml or a theme), for sets whose stock
 diff --git a/launcher/app/src/main/java/com/gathin/tvhome/AiTiles.java b/launcher/app/src/main/java/com/gathin/tvhome/AiTiles.java
 new file mode 100644
-index 00000000..fc75bddd
+index 00000000..3744fe3a
 --- /dev/null
 +++ b/launcher/app/src/main/java/com/gathin/tvhome/AiTiles.java
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,202 @@
 +package com.gathin.tvhome;
 +
 +import android.content.ActivityNotFoundException;
@@ -46,7 +77,9 @@ index 00000000..fc75bddd
 +import java.util.List;
 +
 +/**
-+ * Arche fork: AI assistant tiles placed right after the entertainment apps in the dock. Each tile opens
++ * Arche fork: AI assistant tiles placed right after the entertainment apps in the dock, then the money apps
++ * (Angel One, Groww). Each row has its switch in Arche settings. A tile shows the app's own icon when the
++ * app is installed, else a symbol drawn in code. Each tile opens
 + * the assistant's Android app when it is on the TV, and its website in the TV's browser when it is not
 + * (most have no TV app). The launcher itself still never goes online: the browser or the app does.
 + *
@@ -77,32 +110,58 @@ index 00000000..fc75bddd
 +            new Spec("Perplexity", "ai.perplexity.app.android", "https://www.perplexity.ai", 0xFF33A3B0, 0xFF17616B),
 +    };
 +
++    /** Arche fork: money apps, after the AI tiles (config.json "money_tiles" in the same form). */
++    private static final Spec[] MONEY = {
++            new Spec("Angel One", "com.msf.angelmobile", "https://www.angelone.in", 0xFF2F6BFF, 0xFF1537A8),
++            new Spec("Groww", "com.nextbillion.groww", "https://groww.in", 0xFF00D09C, 0xFF00876A),
++    };
++
 +    private static final int[][] PALETTE = {
 +            {0xFFE0A15A, 0xFF9C5A1E}, {0xFF5AA8FF, 0xFF2A5DB8}, {0xFFC86BFF, 0xFF6E2AA8}, {0xFF5AE0A0, 0xFF1E8A5A},
 +    };
 +
 +    private AiTiles() {}
 +
-+    /** The tiles to show, from config.json "ai_tiles" or the defaults. */
++    /**
++     * The tiles to show: the AI row, then the money apps, each from config.json ("ai_tiles",
++     * "money_tiles") or the defaults, and each only while its switch in Arche settings is on.
++     */
 +    static List<Spec> specs(Context ctx) {
 +        JSONObject json = VibePlayer.readConfig(Config.dir(ctx));
 +        List<Spec> out = new ArrayList<>();
-+        JSONArray list = json == null ? null : json.optJSONArray("ai_tiles");
++        if (ArcheSettings.on(ctx, ArcheSettings.AI_TILES)) group(json, "ai_tiles", DEFAULTS, out);
++        if (ArcheSettings.on(ctx, ArcheSettings.MONEY_TILES)) group(json, "money_tiles", MONEY, out);
++        return out;
++    }
++
++    private static void group(JSONObject json, String key, Spec[] defaults, List<Spec> out) {
++        JSONArray list = json == null ? null : json.optJSONArray(key);
 +        if (list == null) {
-+            for (Spec s : DEFAULTS) out.add(s);
-+            return out;
++            for (Spec s : defaults) out.add(s);
++            return;
 +        }
-+        for (int i = 0; i < list.length() && out.size() < 8; i++) {
++        int limit = out.size() + 8;
++        for (int i = 0; i < list.length() && out.size() < limit; i++) {
 +            String[] f = list.optString(i, "").split("\\|", -1);
 +            if (f.length != 3) continue;
 +            String name = f[0].trim(), pkg = f[1].trim(), url = f[2].trim();
 +            if (name.isEmpty() || name.length() > 24 || !url.startsWith("https://")) continue;
 +            Spec known = null;
 +            for (Spec d : DEFAULTS) if (d.pkg.equals(pkg)) known = d;
++            for (Spec d : MONEY) if (d.pkg.equals(pkg)) known = d;
 +            int[] c = PALETTE[out.size() % PALETTE.length];
 +            out.add(known != null ? new Spec(name, pkg, url, known.top, known.bottom) : new Spec(name, pkg, url, c[0], c[1]));
 +        }
-+        return out;
++    }
++
++    /** The app's own icon (its real logo) when it is installed on the TV; null when it is not. */
++    static Drawable realIcon(Context ctx, Spec s) {
++        if (s.pkg.isEmpty()) return null;
++        try {
++            return ctx.getPackageManager().getApplicationIcon(s.pkg);
++        } catch (Exception e) {
++            return null;
++        }
 +    }
 +
 +    static ComponentName component(Context ctx, int index) {
@@ -194,7 +253,7 @@ index 00000000..fc75bddd
 +    }
 +}
 diff --git a/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java b/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
-index 3632d74b..0a7acbef 100644
+index 3632d74b..6ffdac05 100644
 --- a/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
 +++ b/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
 @@ -64,7 +64,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
@@ -215,7 +274,7 @@ index 3632d74b..0a7acbef 100644
  
          Entry(String label, ComponentName component, Drawable banner, Drawable icon) {
              this(APP, label, component, banner, icon, null, 0);
-@@ -335,6 +337,22 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+@@ -335,6 +337,25 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
              fresh.add(docked + i, new Entry(Entry.EMPTY, "", new ComponentName(ctx, "empty-dock-slot-" + i),
                      null, null, null, 0));
          }
@@ -230,7 +289,10 @@ index 3632d74b..0a7acbef 100644
 +            at = Math.min(at, end);
 +            for (int i = 0; i < ai.size(); i++) {
 +                AiTiles.Spec spec = ai.get(i);
-+                Entry web = new Entry(Entry.WEB, spec.name, AiTiles.component(ctx, i), null, AiTiles.symbol(spec), null, spec.top);
++                // The app's real logo when it is installed, else the drawn symbol.
++                Drawable real = AiTiles.realIcon(ctx, spec);
++                Entry web = new Entry(Entry.WEB, spec.name, AiTiles.component(ctx, i), null,
++                        real != null ? real : AiTiles.symbol(spec), null, real != null ? 0 : spec.top);
 +                web.ai = spec;
 +                fresh.add(at + i, web);
 +            }
@@ -238,7 +300,7 @@ index 3632d74b..0a7acbef 100644
          items.clear();
          items.addAll(fresh);
          notifyDataSetChanged();
-@@ -509,6 +527,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+@@ -509,6 +530,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
  
      /** Opens the tile's activity by explicit component, with no extras: a card can name nothing else. */
      private void launch(Entry e) {
@@ -249,19 +311,493 @@ index 3632d74b..0a7acbef 100644
          if (e.kind == Entry.HOME_SETTINGS) {
              ctx.startActivity(new Intent(ctx, HomeSettingsActivity.class)
                      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/ArcheSettings.java b/launcher/app/src/main/java/com/gathin/tvhome/ArcheSettings.java
+new file mode 100644
+index 00000000..c3ccd144
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/ArcheSettings.java
+@@ -0,0 +1,68 @@
++package com.gathin.tvhome;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++
++/**
++ * Arche fork: the on-TV switches for every Arche extra, kept with the other Launcher settings
++ * (Config.SETTINGS_NAME) so Home rebuilds when one changes. "Return to default" removes them all.
++ */
++final class ArcheSettings {
++    /** One switch: its preference key, its name on the settings page and its default. */
++    static final class Switch {
++        final String key;
++        final int label;
++        final boolean def;
++
++        Switch(String key, int label, boolean def) {
++            this.key = key;
++            this.label = label;
++            this.def = def;
++        }
++    }
++
++    static final Switch AI_TILES = new Switch("arche_ai_tiles", R.string.arche_set_ai, true);
++    static final Switch MONEY_TILES = new Switch("arche_money_tiles", R.string.arche_set_money, true);
++    static final Switch VIBES = new Switch("arche_vibes", R.string.arche_set_vibes, true);
++    static final Switch SOUND = new Switch("arche_startup_sound", R.string.arche_set_sound, true);
++    static final Switch W_WORLD = new Switch("arche_w_world", R.string.arche_w_world, false);
++    static final Switch W_CALENDAR = new Switch("arche_w_calendar", R.string.arche_w_calendar, false);
++    static final Switch W_DAY = new Switch("arche_w_day", R.string.arche_w_day, false);
++    static final Switch W_LINE = new Switch("arche_w_line", R.string.arche_w_line, false);
++
++    /** The page's rows, in order: the tiles and extras first, then the widgets (off until turned on). */
++    static final Switch[] EXTRAS = {AI_TILES, MONEY_TILES, VIBES, SOUND};
++    static final Switch[] WIDGETS = {W_WORLD, W_CALENDAR, W_DAY, W_LINE};
++
++    private ArcheSettings() {}
++
++    private static SharedPreferences prefs(Context ctx) {
++        return ctx.getApplicationContext().getSharedPreferences(Config.SETTINGS_NAME, Context.MODE_PRIVATE);
++    }
++
++    static boolean on(Context ctx, Switch s) {
++        return prefs(ctx).getBoolean(s.key, s.def);
++    }
++
++    static boolean anyWidget(Context ctx) {
++        for (Switch s : WIDGETS) if (on(ctx, s)) return true;
++        return false;
++    }
++
++    static void set(Context ctx, Switch s, boolean value) {
++        bump(prefs(ctx).edit().putBoolean(s.key, value), ctx);
++    }
++
++    /** Every Arche switch back to its default. */
++    static void reset(Context ctx) {
++        SharedPreferences.Editor e = prefs(ctx).edit();
++        for (Switch s : EXTRAS) e.remove(s.key);
++        for (Switch s : WIDGETS) e.remove(s.key);
++        bump(e, ctx);
++    }
++
++    /** Saves and moves Launcher settings' change count, so Home rebuilds when it next resumes. */
++    private static void bump(SharedPreferences.Editor e, Context ctx) {
++        e.putLong(Config.SETTINGS_REVISION_KEY, prefs(ctx).getLong(Config.SETTINGS_REVISION_KEY, 0) + 1).apply();
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/ArcheSettingsActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/ArcheSettingsActivity.java
+new file mode 100644
+index 00000000..2c14692f
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/ArcheSettingsActivity.java
+@@ -0,0 +1,135 @@
++package com.gathin.tvhome;
++
++import android.app.Activity;
++import android.app.AlertDialog;
++import android.os.Bundle;
++import android.util.TypedValue;
++import android.view.ContextThemeWrapper;
++import android.view.ViewGroup;
++import android.widget.LinearLayout;
++import android.widget.ScrollView;
++import android.widget.TextView;
++import android.widget.Toast;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * Arche fork: the remote-friendly page for every Arche extra, opened from Launcher settings. Each row
++ * switches one extra on or off; the widgets start off. "Return to default" puts every switch back,
++ * and "Original look" turns every extra off for the plain Clean Your TV home screen.
++ */
++public final class ArcheSettingsActivity extends Activity {
++    @Override
++    protected void attachBaseContext(android.content.Context base) {
++        super.attachBaseContext(LauncherLocale.wrap(base));
++    }
++
++    private final List<TextView> rows = new ArrayList<>();
++    private final List<ArcheSettings.Switch> switches = new ArrayList<>();
++    private float dp;
++
++    @Override
++    protected void onCreate(Bundle state) {
++        super.onCreate(state);
++        dp = getResources().getDisplayMetrics().density;
++        ScrollView scroll = new ScrollView(this);
++        scroll.setBackgroundColor(0xFF101419);
++        scroll.setFillViewport(true);
++        LinearLayout list = new LinearLayout(this);
++        list.setOrientation(LinearLayout.VERTICAL);
++        int side = Math.round(72 * dp), top = Math.round(38 * dp);
++        list.setPadding(side, top, side, top);
++        scroll.addView(list, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
++
++        list.addView(text(getString(R.string.arche_settings), 34, 0xFFFFFFFF, 0));
++        list.addView(text(getString(R.string.arche_settings_hint), 15, 0xFFACB8C1, 8));
++        for (ArcheSettings.Switch s : ArcheSettings.EXTRAS) list.addView(switchRow(s, rows.isEmpty() ? 26 : 10));
++        list.addView(text(getString(R.string.arche_widgets_title), 22, 0xFFFFFFFF, 30));
++        list.addView(text(getString(R.string.arche_widgets_hint), 15, 0xFFACB8C1, 6));
++        boolean first = true;
++        for (ArcheSettings.Switch s : ArcheSettings.WIDGETS) {
++            list.addView(switchRow(s, first ? 14 : 10));
++            first = false;
++        }
++
++        TextView reset = row(getString(R.string.arche_reset), 34);
++        reset.setOnClickListener(v -> new AlertDialog.Builder(this)
++                .setTitle(R.string.arche_reset)
++                .setMessage(R.string.arche_reset_message)
++                .setPositiveButton(R.string.arche_reset_yes, (d, w) -> {
++                    ArcheSettings.reset(this);
++                    setResult(RESULT_OK);
++                    refresh();
++                    Toast.makeText(this, R.string.arche_reset_done, Toast.LENGTH_SHORT).show();
++                })
++                .setNegativeButton(android.R.string.cancel, null)
++                .show());
++        list.addView(reset);
++
++        TextView original = row(getString(R.string.arche_original), 10);
++        original.setOnClickListener(v -> {
++            for (ArcheSettings.Switch s : ArcheSettings.EXTRAS) ArcheSettings.set(this, s, false);
++            for (ArcheSettings.Switch s : ArcheSettings.WIDGETS) ArcheSettings.set(this, s, false);
++            setResult(RESULT_OK);
++            refresh();
++            Toast.makeText(this, R.string.arche_original_done, Toast.LENGTH_SHORT).show();
++        });
++        list.addView(original);
++        list.addView(text(getString(R.string.arche_original_hint), 14, 0xFFACB8C1, 7));
++
++        setContentView(scroll);
++        refresh();
++        if (!rows.isEmpty()) rows.get(0).requestFocus();
++    }
++
++    private TextView switchRow(ArcheSettings.Switch s, int marginTopDp) {
++        TextView row = row("", marginTopDp);
++        rows.add(row);
++        switches.add(s);
++        row.setOnClickListener(v -> {
++            ArcheSettings.set(this, s, !ArcheSettings.on(this, s));
++            setResult(RESULT_OK);
++            refresh();
++        });
++        return row;
++    }
++
++    private void refresh() {
++        for (int i = 0; i < rows.size(); i++) {
++            ArcheSettings.Switch s = switches.get(i);
++            boolean on = ArcheSettings.on(this, s);
++            rows.get(i).setText(getString(R.string.arche_switch_row, getString(s.label),
++                    getString(on ? R.string.arche_on : R.string.arche_off)));
++        }
++    }
++
++    /** A focusable row in Launcher settings' own style (styles.xml SettingsRow). */
++    private TextView row(String label, int marginTopDp) {
++        TextView row = new TextView(new ContextThemeWrapper(this, R.style.SettingsRow), null, 0);
++        row.setText(label);
++        row.setFocusable(true);
++        row.setClickable(true);
++        row.setBackgroundResource(R.drawable.settings_choice_bg);
++        row.setTextColor(0xFFFFFFFF);
++        row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
++        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
++        int pad = Math.round(18 * dp);
++        row.setPadding(pad, 0, pad, 0);
++        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.round(52 * dp));
++        lp.topMargin = Math.round(marginTopDp * dp);
++        row.setLayoutParams(lp);
++        return row;
++    }
++
++    private TextView text(String value, int sp, int color, int marginTopDp) {
++        TextView t = new TextView(this);
++        t.setText(value);
++        t.setTextColor(color);
++        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
++        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
++        lp.topMargin = Math.round(marginTopDp * dp);
++        t.setLayoutParams(lp);
++        return t;
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/ArcheWidgets.java b/launcher/app/src/main/java/com/gathin/tvhome/ArcheWidgets.java
+new file mode 100644
+index 00000000..c5610887
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/ArcheWidgets.java
+@@ -0,0 +1,238 @@
++package com.gathin.tvhome;
++
++import android.content.Context;
++import android.graphics.drawable.GradientDrawable;
++import android.os.Handler;
++import android.os.Looper;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.FrameLayout;
++import android.widget.LinearLayout;
++import android.widget.ProgressBar;
++import android.widget.TextView;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++
++import java.time.DayOfWeek;
++import java.time.LocalDate;
++import java.time.LocalDateTime;
++import java.time.ZoneId;
++import java.time.ZonedDateTime;
++import java.time.format.DateTimeFormatter;
++import java.time.format.TextStyle;
++import java.time.temporal.ChronoUnit;
++import java.time.temporal.IsoFields;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Locale;
++
++/**
++ * Arche fork: small glass widgets side by side on the right of Home, in the band between the clock and
++ * the dock (each 200dp wide, so all four fit a 1080p TV). All are off until turned
++ * on in Arche settings, need nothing from the internet (the launcher has no network access), and update
++ * once a minute while Home is on screen.
++ *
++ * World clock: three cities (config.json "world_clocks": IANA zone ids, e.g. "Europe/London").
++ * Calendar: today's day, date, week and day of the year. Day: how far through the day and the week.
++ * Line of the day: one short line, a new one each day.
++ */
++final class ArcheWidgets {
++    private static final long MINUTE_MS = 60_000L;
++    private static final String[] LINES = {
++            "Small steps, every day.", "Make the next hour count.", "Rest is part of the work.",
++            "Start before you feel ready.", "Done is better than perfect.", "Be the calm in the room.",
++            "Curiosity is a superpower.", "One thing at a time.", "Leave it better than you found it.",
++            "Hard choices, easy life.", "Learn something small today.", "Drink water. Stand up. Breathe.",
++            "Focus is saying no to good ideas.", "Your future self is watching.", "Kindness is never wasted.",
++            "Show up, even on slow days.", "Progress, not perfection.", "Keep the promise you made to yourself.",
++            "The best time is now.", "Every master was once a beginner.", "Ask one good question today.",
++    };
++
++    private final Context ctx;
++    private final LinearLayout column;
++    private final Handler handler = new Handler(Looper.getMainLooper());
++    private final List<Runnable> updaters = new ArrayList<>();
++    private final float dp;
++    private boolean running;
++
++    private final Runnable tick = new Runnable() {
++        @Override public void run() {
++            for (Runnable r : updaters) r.run();
++            if (running) handler.postDelayed(this, MINUTE_MS - System.currentTimeMillis() % MINUTE_MS + 50);
++        }
++    };
++
++    /** Adds the switched-on widgets to Home's root; null when none is on (nothing is added then). */
++    static ArcheWidgets attach(Context ctx, FrameLayout root) {
++        if (!ArcheSettings.anyWidget(ctx)) return null;
++        return new ArcheWidgets(ctx, root);
++    }
++
++    private ArcheWidgets(Context ctx, FrameLayout root) {
++        this.ctx = ctx;
++        dp = ctx.getResources().getDisplayMetrics().density;
++        column = new LinearLayout(ctx);
++        column.setOrientation(LinearLayout.HORIZONTAL);
++        column.setFocusable(false);
++        column.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
++        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
++                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
++        lp.topMargin = Math.round(118 * dp);
++        lp.setMarginEnd(Math.round(56 * dp));
++        if (ArcheSettings.on(ctx, ArcheSettings.W_WORLD)) worldClock();
++        if (ArcheSettings.on(ctx, ArcheSettings.W_CALENDAR)) calendar();
++        if (ArcheSettings.on(ctx, ArcheSettings.W_DAY)) day();
++        if (ArcheSettings.on(ctx, ArcheSettings.W_LINE)) line();
++        root.addView(column, lp);
++    }
++
++    void start() {
++        if (running) return;
++        running = true;
++        handler.removeCallbacks(tick);
++        tick.run();
++    }
++
++    void stop() {
++        running = false;
++        handler.removeCallbacks(tick);
++    }
++
++    // ---- the widgets -------------------------------------------------------------------------------
++
++    private void worldClock() {
++        LinearLayout card = card(ctx.getString(R.string.arche_w_world));
++        List<ZoneId> zones = zones();
++        List<TextView> times = new ArrayList<>();
++        for (ZoneId z : zones) {
++            LinearLayout line = new LinearLayout(ctx);
++            line.setOrientation(LinearLayout.HORIZONTAL);
++            TextView city = label(cityName(z), 16, 0xD9FFFFFF);
++            city.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
++            TextView time = label("", 18, 0xFFFFFFFF);
++            line.addView(city);
++            line.addView(time);
++            line.setPadding(0, Math.round(3 * dp), 0, Math.round(3 * dp));
++            card.addView(line);
++            times.add(time);
++        }
++        DateTimeFormatter f = DateTimeFormatter.ofPattern("HH:mm  EEE", Locale.getDefault());
++        updaters.add(() -> {
++            for (int i = 0; i < zones.size(); i++) times.get(i).setText(ZonedDateTime.now(zones.get(i)).format(f));
++        });
++    }
++
++    private void calendar() {
++        LinearLayout card = card(ctx.getString(R.string.arche_w_calendar));
++        TextView big = label("", 24, 0xFFFFFFFF);
++        TextView date = label("", 16, 0xD9FFFFFF);
++        TextView small = label("", 14, 0xA6FFFFFF);
++        card.addView(big);
++        card.addView(date);
++        card.addView(small);
++        updaters.add(() -> {
++            LocalDate d = LocalDate.now();
++            big.setText(d.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.getDefault()));
++            date.setText(d.format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.getDefault())));
++            small.setText(ctx.getString(R.string.arche_w_calendar_line, d.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR),
++                    d.getDayOfYear(), d.lengthOfYear()));
++        });
++    }
++
++    private void day() {
++        LinearLayout card = card(ctx.getString(R.string.arche_w_day));
++        TextView pct = label("", 16, 0xFFFFFFFF);
++        ProgressBar bar = new ProgressBar(ctx, null, android.R.attr.progressBarStyleHorizontal);
++        bar.setMax(1000);
++        bar.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.round(8 * dp)));
++        TextView week = label("", 14, 0xA6FFFFFF);
++        card.addView(pct);
++        card.addView(bar);
++        card.addView(week);
++        updaters.add(() -> {
++            LocalDateTime now = LocalDateTime.now();
++            int minutes = now.getHour() * 60 + now.getMinute();
++            bar.setProgress(minutes * 1000 / 1440);
++            pct.setText(ctx.getString(R.string.arche_w_day_line, minutes * 100 / 1440));
++            DayOfWeek dow = now.getDayOfWeek();
++            if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) {
++                week.setText(R.string.arche_w_weekend_now);
++            } else {
++                long days = ChronoUnit.DAYS.between(now.toLocalDate(), now.toLocalDate().with(java.time.temporal.TemporalAdjusters.next(DayOfWeek.SATURDAY)));
++                week.setText(ctx.getResources().getQuantityString(R.plurals.arche_w_weekend_in, (int) days, (int) days));
++            }
++        });
++    }
++
++    private void line() {
++        LinearLayout card = card(ctx.getString(R.string.arche_w_line));
++        TextView text = label("", 16, 0xFFFFFFFF);
++        card.addView(text);
++        updaters.add(() -> text.setText(LINES[(int) Math.floorMod(LocalDate.now().toEpochDay(), (long) LINES.length)]));
++    }
++
++    // ---- building blocks ---------------------------------------------------------------------------
++
++    /** A frosted-glass card with a small title, added to the column. */
++    private LinearLayout card(String title) {
++        LinearLayout card = new LinearLayout(ctx);
++        card.setOrientation(LinearLayout.VERTICAL);
++        int pad = Math.round(16 * dp);
++        card.setPadding(pad, Math.round(12 * dp), pad, Math.round(14 * dp));
++        GradientDrawable bg = new GradientDrawable();
++        bg.setCornerRadius(20 * dp);
++        bg.setColor(0x2EFFFFFF);
++        bg.setStroke(Math.max(1, Math.round(dp)), 0x40FFFFFF);
++        card.setBackground(bg);
++        card.addView(label(title, 13, 0xA6FFFFFF));
++        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Math.round(200 * dp), ViewGroup.LayoutParams.WRAP_CONTENT);
++        if (column.getChildCount() > 0) lp.setMarginStart(Math.round(12 * dp));
++        column.addView(card, lp);
++        return card;
++    }
++
++    private TextView label(String value, int sp, int color) {
++        TextView t = new TextView(ctx);
++        t.setText(value);
++        t.setTextColor(color);
++        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
++        t.setShadowLayer(4 * dp, 0, dp, 0x99000000);
++        t.setFocusable(false);
++        try {
++            t.setTypeface(UiFont.get(ctx, R.string.font_regular));
++        } catch (Exception ignored) {
++            // the system font is fine
++        }
++        return t;
++    }
++
++    private List<ZoneId> zones() {
++        List<ZoneId> out = new ArrayList<>();
++        JSONObject json = VibePlayer.readConfig(Config.dir(ctx));
++        JSONArray list = json == null ? null : json.optJSONArray("world_clocks");
++        if (list != null) {
++            for (int i = 0; i < list.length() && out.size() < 4; i++) {
++                try {
++                    out.add(ZoneId.of(list.optString(i, "").trim()));
++                } catch (RuntimeException ignored) {
++                    // not a zone id: skip it
++                }
++            }
++        }
++        if (out.isEmpty()) {
++            out.add(ZoneId.of("Europe/London"));
++            out.add(ZoneId.of("America/New_York"));
++            out.add(ZoneId.of("Asia/Tokyo"));
++        }
++        return out;
++    }
++
++    private static String cityName(ZoneId zone) {
++        String id = zone.getId();
++        int slash = id.lastIndexOf('/');
++        return (slash >= 0 ? id.substring(slash + 1) : id).replace('_', ' ');
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/LauncherSettingsActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/LauncherSettingsActivity.java
+index e4d1ab46..a9145b7a 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/LauncherSettingsActivity.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/LauncherSettingsActivity.java
+@@ -154,6 +154,8 @@ public final class LauncherSettingsActivity extends Activity {
+             Toast.makeText(this, R.string.home_settings_help, Toast.LENGTH_LONG).show();
+             open(new Intent(Settings.ACTION_HOME_SETTINGS));
+         });
++        // Arche fork: every Arche extra and widget, with Return to default (ArcheSettingsActivity).
++        findViewById(R.id.archeChoice).setOnClickListener(v -> open(new Intent(this, ArcheSettingsActivity.class)));
+         findViewById(R.id.tvSettingsChoice).setOnClickListener(v ->
+                 open(SystemSettings.intent(this, Settings.ACTION_SETTINGS)));
+         refresh();
 diff --git a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
-index a5acd794..f088a4f8 100644
+index a5acd794..dbf740ab 100644
 --- a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
 +++ b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
-@@ -140,6 +140,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+@@ -140,6 +140,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      private RecyclerView grid;
      private FrameLayout root;
      private WallpaperPlayer wallpaperPlayer;
 +    private VibePlayer vibePlayer;
++    /** Arche fork: the widgets switched on in Arche settings; null when none is. */
++    private ArcheWidgets archeWidgets;
      private GlassView glass;
      private View ambient;
      private TextView heroName;
-@@ -390,6 +391,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+@@ -390,6 +393,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
          density = getResources().getDisplayMetrics().density;
          // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
          Config cfg = Config.load(this);
@@ -270,16 +806,33 @@ index a5acd794..f088a4f8 100644
          homeAppKeys = RemoteKeys.parseAppKeys(cfg.appKeys);
          appLibrarySelection = cfg.appLibrarySelection;
          libraryOkOpens = cfg.libraryOkOpens;
-@@ -432,6 +435,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+@@ -432,6 +437,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
          // the theme's background, so launch looks the same.
          getWindow().setBackgroundDrawable(null);
          wallpaperPlayer = new WallpaperPlayer(this, root, cfg);
 +        // Arche fork: a picture per app from files/vibes/, changing as the focus moves (VibePlayer).
 +        vibePlayer = new VibePlayer(this, root, cfg.wallpaperEnabled && !cfg.wallpapers.isEmpty() ? 1 : 0);
++        archeWidgets = ArcheWidgets.attach(this, root);
          sky = findViewById(R.id.sky);
          sky.setIntensity(cfg.skyIntensity);
          glass = findViewById(R.id.glass);
-@@ -1197,6 +1202,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+@@ -985,6 +993,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         if (showStats) startStats();
+         sky.update();
+         wallpaperPlayer.start();
++        if (archeWidgets != null) archeWidgets.start();
+         handler.postDelayed(minuteTick, MINUTE_MS);
+         if (festive && diya != null) {
+             diya.start();
+@@ -1154,6 +1163,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         root.removeCallbacks(showIdleClock);
+         endReorder();   // Home or another app while reordering keeps the order so far
+         wallpaperPlayer.stop();
++        if (archeWidgets != null) archeWidgets.stop();
+         stopAmbientAnimation();
+         hero.animate().cancel();
+         ambient.animate().cancel();
+@@ -1197,6 +1207,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
          heroArtCache.clear();
          heroArtKey = null;
          wallpaperPlayer.releaseForMemoryPressure();
@@ -287,7 +840,7 @@ index a5acd794..f088a4f8 100644
          tileRefresh.invalidate();
      }
  
-@@ -1215,6 +1221,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+@@ -1215,6 +1226,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
          super.onDestroy();
          unregisterReceiver(packageReceiver);
          wallpaperPlayer.close();
@@ -295,7 +848,7 @@ index a5acd794..f088a4f8 100644
          ConnectivityManager cm = getSystemService(ConnectivityManager.class);
          TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
          if (tim != null) tim.unregisterCallback(inputCallback);
-@@ -1624,6 +1631,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+@@ -1624,6 +1636,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      @Override
      public void onTileFocused(int position, View card) {
          lastFocused = position;
@@ -305,7 +858,7 @@ index a5acd794..f088a4f8 100644
          // would be sized to 2*pad. Run again once the tile is laid out.
 diff --git a/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java b/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java
 new file mode 100644
-index 00000000..afe67813
+index 00000000..d90d99fa
 --- /dev/null
 +++ b/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java
 @@ -0,0 +1,124 @@
@@ -355,7 +908,7 @@ index 00000000..afe67813
 +        try {
 +            Context app = ctx.getApplicationContext();
 +            String mode = mode(app);
-+            if ("off".equals(mode)) return;
++            if ("off".equals(mode) || !ArcheSettings.on(app, ArcheSettings.SOUND)) return;
 +            if (!"always".equals(mode)) {
 +                int boot = Settings.Global.getInt(app.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
 +                SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -453,7 +1006,7 @@ index 18fded94..9a657f0d 100644
              return WALLPAPERS + "/" + segments.get(1);
 diff --git a/launcher/app/src/main/java/com/gathin/tvhome/VibePlayer.java b/launcher/app/src/main/java/com/gathin/tvhome/VibePlayer.java
 new file mode 100644
-index 00000000..e382173b
+index 00000000..9787cc2a
 --- /dev/null
 +++ b/launcher/app/src/main/java/com/gathin/tvhome/VibePlayer.java
 @@ -0,0 +1,207 @@
@@ -519,7 +1072,7 @@ index 00000000..e382173b
 +        this.root = root;
 +        File dir = Config.dir(context);
 +        File[] images = dir == null ? null : new File(dir, DIR).listFiles((d, name) -> ThemeFiles.collectionImage(name));
-+        if (images != null) {
++        if (images != null && ArcheSettings.on(context, ArcheSettings.VIBES)) {
 +            Arrays.sort(images, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
 +            for (File f : images) if (f.isFile() && f.length() > 0) files.add(f);
 +        }
@@ -664,6 +1217,23 @@ index 00000000..e382173b
 +        }
 +    }
 +}
+diff --git a/launcher/app/src/main/res/layout/activity_launcher_settings.xml b/launcher/app/src/main/res/layout/activity_launcher_settings.xml
+index b3de8647..dcaef8cd 100644
+--- a/launcher/app/src/main/res/layout/activity_launcher_settings.xml
++++ b/launcher/app/src/main/res/layout/activity_launcher_settings.xml
+@@ -117,6 +117,12 @@
+             android:layout_marginTop="28dp"
+             android:visibility="gone" />
+ 
++        <TextView
++            android:id="@+id/archeChoice"
++            style="@style/SettingsRow"
++            android:layout_marginTop="28dp"
++            android:text="@string/arche_settings" />
++
+         <TextView
+             android:id="@+id/followThemeChoice"
+             style="@style/SettingsRow"
 diff --git a/launcher/app/src/main/res/layout/activity_main.xml b/launcher/app/src/main/res/layout/activity_main.xml
 index c037d247..75bca69a 100644
 --- a/launcher/app/src/main/res/layout/activity_main.xml
@@ -691,13 +1261,43 @@ index a9987423..c6926fa0 100644
      <bool name="show_greeting">true</bool>
      <!-- The date and the line between the clock and the date in the clock's full white instead of dimmed. Can also be
 diff --git a/launcher/app/src/main/res/values/strings.xml b/launcher/app/src/main/res/values/strings.xml
-index 635bced9..40d3186e 100644
+index 635bced9..4300ef1c 100644
 --- a/launcher/app/src/main/res/values/strings.xml
 +++ b/launcher/app/src/main/res/values/strings.xml
-@@ -151,4 +151,6 @@
+@@ -151,4 +151,36 @@
      <!-- Cinematic top shelf (cinematic_home): the line under the focused dock app's name; %1$s is when it was
           last opened, e.g. "5 minutes ago" or "yesterday, 9:40 pm". -->
      <string name="last_opened">Last opened %1$s</string>
 +    <!-- Arche fork: an AI tile whose assistant has no app on the TV and no browser to open its site. -->
 +    <string name="arche_ai_needs_browser" translatable="false">To open %1$s, install a web browser on the TV, for example from the Play Store.</string>
++    <!-- Arche fork: the Arche settings page (ArcheSettingsActivity) and its widgets (ArcheWidgets). -->
++    <string name="arche_settings" translatable="false">Arche extras</string>
++    <string name="arche_settings_hint" translatable="false">Turn each extra on or off. Home changes when you go back.</string>
++    <string name="arche_switch_row" translatable="false">%1$s: %2$s</string>
++    <string name="arche_on" translatable="false">On</string>
++    <string name="arche_off" translatable="false">Off</string>
++    <string name="arche_set_ai" translatable="false">AI tiles (Claude, ChatGPT, Gemini, Perplexity)</string>
++    <string name="arche_set_money" translatable="false">Money tiles (Angel One, Groww)</string>
++    <string name="arche_set_vibes" translatable="false">Vibes: a picture per app</string>
++    <string name="arche_set_sound" translatable="false">Startup sound</string>
++    <string name="arche_widgets_title" translatable="false">Widgets</string>
++    <string name="arche_widgets_hint" translatable="false">Off until you turn them on. They show on the right, above the apps.</string>
++    <string name="arche_w_world" translatable="false">World clock</string>
++    <string name="arche_w_calendar" translatable="false">Calendar</string>
++    <string name="arche_w_calendar_line" translatable="false">Week %1$d · day %2$d of %3$d</string>
++    <string name="arche_w_day" translatable="false">Day</string>
++    <string name="arche_w_day_line" translatable="false">%1$d%% of today gone</string>
++    <string name="arche_w_weekend_now" translatable="false">It\'s the weekend</string>
++    <plurals name="arche_w_weekend_in" translatable="false">
++        <item quantity="one">Weekend in %1$d day</item>
++        <item quantity="other">Weekend in %1$d days</item>
++    </plurals>
++    <string name="arche_w_line" translatable="false">Line of the day</string>
++    <string name="arche_reset" translatable="false">Return to default</string>
++    <string name="arche_reset_message" translatable="false">Put every Arche extra back the way it came: AI and money tiles, vibes and the startup sound on, widgets off.</string>
++    <string name="arche_reset_yes" translatable="false">Return to default</string>
++    <string name="arche_reset_done" translatable="false">Back to default</string>
++    <string name="arche_original" translatable="false">Original look: every extra off</string>
++    <string name="arche_original_done" translatable="false">Every extra is off</string>
++    <string name="arche_original_hint" translatable="false">To bring back the TV\'s own home screen, use Undo everything in the phone app.</string>
  </resources>
