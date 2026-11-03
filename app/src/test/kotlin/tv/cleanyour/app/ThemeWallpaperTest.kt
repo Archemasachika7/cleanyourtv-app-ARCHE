@@ -64,7 +64,7 @@ class ThemeWallpaperTest {
         assertEquals(files.size + 1, blobs.puts.get())
         val pictures = source.pictures()
         // look2: the gallery of every look's picture (spec 6.2), Diwali first while it is offered.
-        assertEquals(listOf("diwali", "aurora", "mist", "glass", "ruska", "curtains", "mountains", "lamp", "neon", "cobalt"), pictures.map { it.id })
+        assertEquals(listOf("doom", "diwali", "aurora", "mist", "glass", "ruska", "curtains", "mountains", "lamp", "neon", "cobalt"), pictures.map { it.id })
         assertTrue(pictures.all { File(it.wallpaper.path).isFile && it.wallpaper.size in 1..300_000 })
     }
 

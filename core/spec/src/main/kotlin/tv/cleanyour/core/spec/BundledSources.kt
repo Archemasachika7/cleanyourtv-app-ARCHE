@@ -174,6 +174,8 @@ class BundledThemeSource : ThemeSource, PictureSource {
             val festival: String? = null, val accent: String? = null, val sky: Int = 0)
 
         private val galleryEntries = listOf(
+            // Arche fork: an original iron mask in emerald and gold (tv/arche/tools/make_wallpaper.py).
+            GalleryEntry("doom", "Iron Monarch", "$LOOKS/doom/wallpaper.jpg", 0xFF040A07.toInt()),
             GalleryEntry("diwali", "Diwali", "$LOOKS/diwali/wallpaper.jpg", 0xFF120809.toInt(), until = LocalDate.of(2026, 11, 10),
                 festival = "diwali", accent = "#FFB23C"),
             GalleryEntry("aurora", "Aurora", "$THEMES/aurora/wallpaper.jpg", 0xFF070A14.toInt()),

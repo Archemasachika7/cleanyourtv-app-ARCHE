@@ -164,6 +164,7 @@ data class ThemeOption(val id: String, val name: String, val description: String
 // picture of the TV's theme (D-W7-5), not phone UI colours. Shared by S3a and M2 so the two
 // pickers look the same (R4-W8). Unknown ids get the Default picture.
 fun themeSwatch(id: String): List<Color> = when (id) {
+    "doom" -> listOf(Color(0xFF040A07), Color(0xFFD4AF37), Color(0xFF0A2C1A), Color(0xFF50FF96))
     "aurora" -> listOf(Color(0xFF041018), Color(0xFF1FA597), Color(0xFF0B5E57), Color(0xFF1D4FBF))
     "six-columns" -> listOf(Color.Black, Color(0xFFB9C2CC), Color(0xFF3B3B40), Color(0xFF76767D))
     "cinema" -> listOf(Color(0xFF07060A), Color(0xFFE8C27A), Color(0xFF8E1B2C), Color(0xFF2A0A12))

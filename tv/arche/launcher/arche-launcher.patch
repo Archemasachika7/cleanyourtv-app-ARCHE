@@ -1,0 +1,703 @@
+diff --git a/launcher/app/build.gradle b/launcher/app/build.gradle
+index 3ceec7b4..06ab1c58 100644
+--- a/launcher/app/build.gradle
++++ b/launcher/app/build.gradle
+@@ -11,8 +11,8 @@ android {
+         applicationId providers.gradleProperty('launcherApplicationId').getOrElse('com.gathin.tvhome')
+         minSdk 26
+         targetSdk 34
+-        versionCode 9
+-        versionName '3.0'
++        versionCode 10
++        versionName '3.0-arche'
+     }
+ 
+     buildTypes {
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/AiTiles.java b/launcher/app/src/main/java/com/gathin/tvhome/AiTiles.java
+new file mode 100644
+index 00000000..fc75bddd
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/AiTiles.java
+@@ -0,0 +1,174 @@
++package com.gathin.tvhome;
++
++import android.content.ActivityNotFoundException;
++import android.content.ComponentName;
++import android.content.Context;
++import android.content.Intent;
++import android.graphics.Canvas;
++import android.graphics.ColorFilter;
++import android.graphics.LinearGradient;
++import android.graphics.Paint;
++import android.graphics.Path;
++import android.graphics.PixelFormat;
++import android.graphics.Rect;
++import android.graphics.RectF;
++import android.graphics.Shader;
++import android.graphics.Typeface;
++import android.graphics.drawable.Drawable;
++import android.net.Uri;
++import android.widget.Toast;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * Arche fork: AI assistant tiles placed right after the entertainment apps in the dock. Each tile opens
++ * the assistant's Android app when it is on the TV, and its website in the TV's browser when it is not
++ * (most have no TV app). The launcher itself still never goes online: the browser or the app does.
++ *
++ * config.json "ai_tiles": a list of "Name|package|https://site" strings replaces the default four;
++ * [] turns the tiles off. Each tile's symbol is drawn in code (a monogram on the assistant's colour),
++ * so no artwork ships with the launcher.
++ */
++final class AiTiles {
++    static final String PREFIX = "ai-tile-";
++
++    static final class Spec {
++        final String name, pkg, url;
++        final int top, bottom;
++
++        Spec(String name, String pkg, String url, int top, int bottom) {
++            this.name = name;
++            this.pkg = pkg;
++            this.url = url;
++            this.top = top;
++            this.bottom = bottom;
++        }
++    }
++
++    private static final Spec[] DEFAULTS = {
++            new Spec("Claude", "com.anthropic.claude", "https://claude.ai", 0xFFE08A6A, 0xFFB4513A),
++            new Spec("ChatGPT", "com.openai.chatgpt", "https://chatgpt.com", 0xFF2FB592, 0xFF0D6E57),
++            new Spec("Gemini", "com.google.android.apps.bard", "https://gemini.google.com", 0xFF6F8BFF, 0xFF8B4FD8),
++            new Spec("Perplexity", "ai.perplexity.app.android", "https://www.perplexity.ai", 0xFF33A3B0, 0xFF17616B),
++    };
++
++    private static final int[][] PALETTE = {
++            {0xFFE0A15A, 0xFF9C5A1E}, {0xFF5AA8FF, 0xFF2A5DB8}, {0xFFC86BFF, 0xFF6E2AA8}, {0xFF5AE0A0, 0xFF1E8A5A},
++    };
++
++    private AiTiles() {}
++
++    /** The tiles to show, from config.json "ai_tiles" or the defaults. */
++    static List<Spec> specs(Context ctx) {
++        JSONObject json = VibePlayer.readConfig(Config.dir(ctx));
++        List<Spec> out = new ArrayList<>();
++        JSONArray list = json == null ? null : json.optJSONArray("ai_tiles");
++        if (list == null) {
++            for (Spec s : DEFAULTS) out.add(s);
++            return out;
++        }
++        for (int i = 0; i < list.length() && out.size() < 8; i++) {
++            String[] f = list.optString(i, "").split("\\|", -1);
++            if (f.length != 3) continue;
++            String name = f[0].trim(), pkg = f[1].trim(), url = f[2].trim();
++            if (name.isEmpty() || name.length() > 24 || !url.startsWith("https://")) continue;
++            Spec known = null;
++            for (Spec d : DEFAULTS) if (d.pkg.equals(pkg)) known = d;
++            int[] c = PALETTE[out.size() % PALETTE.length];
++            out.add(known != null ? new Spec(name, pkg, url, known.top, known.bottom) : new Spec(name, pkg, url, c[0], c[1]));
++        }
++        return out;
++    }
++
++    static ComponentName component(Context ctx, int index) {
++        return new ComponentName(ctx, PREFIX + index);
++    }
++
++    static boolean isTile(ComponentName c) {
++        return c != null && c.getClassName().startsWith(PREFIX);
++    }
++
++    /** Opens the assistant: its app when installed, else its site in the browser, else says what is missing. */
++    static void open(Context ctx, Spec s) {
++        if (!s.pkg.isEmpty()) {
++            Intent app = ctx.getPackageManager().getLeanbackLaunchIntentForPackage(s.pkg);
++            if (app == null) app = ctx.getPackageManager().getLaunchIntentForPackage(s.pkg);
++            if (app != null) {
++                try {
++                    ctx.startActivity(app.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++                    return;
++                } catch (RuntimeException ignored) {
++                    // fall through to the site
++                }
++            }
++        }
++        try {
++            ctx.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(s.url))
++                    .addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++        } catch (ActivityNotFoundException e) {
++            Toast.makeText(ctx, ctx.getString(R.string.arche_ai_needs_browser, s.name), Toast.LENGTH_LONG).show();
++        } catch (RuntimeException e) {
++            Toast.makeText(ctx, ctx.getString(R.string.cant_open, s.name), Toast.LENGTH_SHORT).show();
++        }
++    }
++
++    /** The tile's symbol: the assistant's initial on a rounded square in its colours, with a small spark. */
++    static Drawable symbol(Spec s) {
++        return new Symbol(s);
++    }
++
++    private static final class Symbol extends Drawable {
++        private final Spec spec;
++        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final Paint spark = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final RectF box = new RectF();
++        private final Path star = new Path();
++
++        Symbol(Spec spec) {
++            this.spec = spec;
++            text.setColor(0xFFFFFFFF);
++            text.setTextAlign(Paint.Align.CENTER);
++            text.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
++            spark.setColor(0xF2FFFFFF);
++        }
++
++        @Override
++        public void draw(Canvas canvas) {
++            Rect b = getBounds();
++            float size = Math.min(b.width(), b.height());
++            float left = b.exactCenterX() - size / 2f, top = b.exactCenterY() - size / 2f;
++            box.set(left, top, left + size, top + size);
++            fill.setShader(new LinearGradient(box.left, box.top, box.right, box.bottom, spec.top, spec.bottom, Shader.TileMode.CLAMP));
++            float r = size * 0.24f;
++            canvas.drawRoundRect(box, r, r, fill);
++            text.setTextSize(size * 0.56f);
++            String initial = spec.name.substring(0, 1).toUpperCase(java.util.Locale.ROOT);
++            float y = box.centerY() - (text.descent() + text.ascent()) / 2f;
++            canvas.drawText(initial, box.centerX() - size * 0.04f, y, text);
++            // A four-point spark in the top-right corner: the shared mark of an AI tile.
++            float cx = box.right - size * 0.2f, cy = box.top + size * 0.2f, o = size * 0.11f, i = size * 0.03f;
++            star.reset();
++            star.moveTo(cx, cy - o);
++            star.lineTo(cx + i, cy - i);
++            star.lineTo(cx + o, cy);
++            star.lineTo(cx + i, cy + i);
++            star.lineTo(cx, cy + o);
++            star.lineTo(cx - i, cy + i);
++            star.lineTo(cx - o, cy);
++            star.lineTo(cx - i, cy - i);
++            star.close();
++            canvas.drawPath(star, spark);
++        }
++
++        @Override public void setAlpha(int alpha) { fill.setAlpha(alpha); text.setAlpha(alpha); spark.setAlpha(alpha); }
++        @Override public void setColorFilter(ColorFilter cf) { fill.setColorFilter(cf); }
++        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
++        @Override public int getIntrinsicWidth() { return 192; }
++        @Override public int getIntrinsicHeight() { return 192; }
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java b/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
+index 3632d74b..0a7acbef 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
+@@ -64,7 +64,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+     }
+ 
+     static final class Entry {
+-        static final int APP = 0, HOME_SETTINGS = 1, CARD = 2, EMPTY = 3;
++        static final int APP = 0, HOME_SETTINGS = 1, CARD = 2, EMPTY = 3, WEB = 4;
+ 
+         final int kind;
+         final String label;
+@@ -78,6 +78,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+         int ambient;
+         /** uniform_tiles card fill, top and bottom colour; null until sampled from the icon. */
+         int[] backdrop;
++        /** Arche fork: the assistant a WEB tile opens (AiTiles); null for every other tile. */
++        AiTiles.Spec ai;
+ 
+         Entry(String label, ComponentName component, Drawable banner, Drawable icon) {
+             this(APP, label, component, banner, icon, null, 0);
+@@ -335,6 +337,22 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+             fresh.add(docked + i, new Entry(Entry.EMPTY, "", new ComponentName(ctx, "empty-dock-slot-" + i),
+                     null, null, null, 0));
+         }
++        // Arche fork: the AI assistant tiles, right after the dock's entertainment apps (AiTiles). Left out
++        // while reordering, so the saved order only ever holds real apps.
++        List<AiTiles.Spec> ai = reordering ? java.util.Collections.emptyList() : AiTiles.specs(ctx);
++        if (!ai.isEmpty()) {
++            int at = docked + emptySlots;
++            if (dockRow && fillDock) at = Math.max(at, Math.min(dockSize, fresh.size()));
++            int end = fresh.size();
++            if (end > 0 && fresh.get(end - 1).kind == Entry.HOME_SETTINGS) end--;
++            at = Math.min(at, end);
++            for (int i = 0; i < ai.size(); i++) {
++                AiTiles.Spec spec = ai.get(i);
++                Entry web = new Entry(Entry.WEB, spec.name, AiTiles.component(ctx, i), null, AiTiles.symbol(spec), null, spec.top);
++                web.ai = spec;
++                fresh.add(at + i, web);
++            }
++        }
+         items.clear();
+         items.addAll(fresh);
+         notifyDataSetChanged();
+@@ -509,6 +527,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+ 
+     /** Opens the tile's activity by explicit component, with no extras: a card can name nothing else. */
+     private void launch(Entry e) {
++        if (e.kind == Entry.WEB && e.ai != null) {
++            AiTiles.open(ctx, e.ai);
++            return;
++        }
+         if (e.kind == Entry.HOME_SETTINGS) {
+             ctx.startActivity(new Intent(ctx, HomeSettingsActivity.class)
+                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+index a5acd794..f088a4f8 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+@@ -140,6 +140,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     private RecyclerView grid;
+     private FrameLayout root;
+     private WallpaperPlayer wallpaperPlayer;
++    private VibePlayer vibePlayer;
+     private GlassView glass;
+     private View ambient;
+     private TextView heroName;
+@@ -390,6 +391,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         density = getResources().getDisplayMetrics().density;
+         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
+         Config cfg = Config.load(this);
++        // Arche fork: the startup sound, once per boot (StartupSound).
++        if (savedInstanceState == null) StartupSound.maybePlay(this);
+         homeAppKeys = RemoteKeys.parseAppKeys(cfg.appKeys);
+         appLibrarySelection = cfg.appLibrarySelection;
+         libraryOkOpens = cfg.libraryOkOpens;
+@@ -432,6 +435,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         // the theme's background, so launch looks the same.
+         getWindow().setBackgroundDrawable(null);
+         wallpaperPlayer = new WallpaperPlayer(this, root, cfg);
++        // Arche fork: a picture per app from files/vibes/, changing as the focus moves (VibePlayer).
++        vibePlayer = new VibePlayer(this, root, cfg.wallpaperEnabled && !cfg.wallpapers.isEmpty() ? 1 : 0);
+         sky = findViewById(R.id.sky);
+         sky.setIntensity(cfg.skyIntensity);
+         glass = findViewById(R.id.glass);
+@@ -1197,6 +1202,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         heroArtCache.clear();
+         heroArtKey = null;
+         wallpaperPlayer.releaseForMemoryPressure();
++        if (vibePlayer != null) vibePlayer.releaseForMemoryPressure();
+         tileRefresh.invalidate();
+     }
+ 
+@@ -1215,6 +1221,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         super.onDestroy();
+         unregisterReceiver(packageReceiver);
+         wallpaperPlayer.close();
++        if (vibePlayer != null) vibePlayer.close();
+         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+         if (tim != null) tim.unregisterCallback(inputCallback);
+@@ -1624,6 +1631,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     @Override
+     public void onTileFocused(int position, View card) {
+         lastFocused = position;
++        if (vibePlayer != null) vibePlayer.focus(position);
+         lastFocusedKey = adapter.keyAt(position);
+         // Focus restored before the first layout (cold start): the tile has no size yet, and the glass
+         // would be sized to 2*pad. Run again once the tile is laid out.
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java b/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java
+new file mode 100644
+index 00000000..afe67813
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java
+@@ -0,0 +1,124 @@
++package com.gathin.tvhome;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.media.AudioAttributes;
++import android.media.MediaPlayer;
++import android.net.Uri;
++import android.os.Handler;
++import android.os.Looper;
++import android.provider.Settings;
++
++import org.json.JSONObject;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.nio.charset.StandardCharsets;
++
++/**
++ * Arche fork: a short sound when Home first comes up. It plays once per boot by default, so pressing
++ * Home again stays silent. A theme's config.json can set "startup_sound" to "boot" (the default),
++ * "always" (every time Home is created) or "off".
++ *
++ * Put your own clip in the launcher's files folder (startup_sound.ogg, .mp3, .m4a or .wav, through
++ * ThemeProvider or adb push) and it plays instead of the bundled one. Playback stops after
++ * MAX_MS, and the player is released as soon as it finishes, so nothing stays in memory afterwards.
++ */
++final class StartupSound {
++    static final String[] OWN_FILES = {"startup_sound.ogg", "startup_sound.mp3", "startup_sound.m4a", "startup_sound.wav"};
++    private static final String PREFS = "arche_startup_sound";
++    private static final String LAST_BOOT = "last_boot";
++    private static final long MAX_MS = 15_000L;
++
++    private static boolean playedThisProcess;
++
++    private StartupSound() {}
++
++    static boolean isOwnFile(String name) {
++        for (String f : OWN_FILES) if (f.equals(name)) return true;
++        return false;
++    }
++
++    /** Called from MainActivity.onCreate. Never throws: a broken clip leaves Home silent, never broken. */
++    static void maybePlay(Context ctx) {
++        try {
++            Context app = ctx.getApplicationContext();
++            String mode = mode(app);
++            if ("off".equals(mode)) return;
++            if (!"always".equals(mode)) {
++                int boot = Settings.Global.getInt(app.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
++                SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
++                // BOOT_COUNT is missing on a few firmwares: then play once per launcher process start.
++                if (boot >= 0) {
++                    if (prefs.getInt(LAST_BOOT, -2) == boot) return;
++                    prefs.edit().putInt(LAST_BOOT, boot).apply();
++                } else if (playedThisProcess) {
++                    return;
++                }
++            }
++            playedThisProcess = true;
++            play(app);
++        } catch (RuntimeException e) {
++            // Sound is decoration: never let it take Home down.
++        }
++    }
++
++    private static String mode(Context ctx) {
++        File dir = Config.dir(ctx);
++        if (dir == null) return "boot";
++        File f = new File(dir, Config.FILE_NAME);
++        if (!f.isFile() || f.length() > 512 * 1024) return "boot";
++        try (FileInputStream in = new FileInputStream(f)) {
++            byte[] b = new byte[(int) f.length()];
++            int off = 0;
++            while (off < b.length) {
++                int n = in.read(b, off, b.length - off);
++                if (n < 0) break;
++                off += n;
++            }
++            String v = new JSONObject(new String(b, 0, off, StandardCharsets.UTF_8)).optString("startup_sound", "boot");
++            return v.trim().toLowerCase(java.util.Locale.ROOT);
++        } catch (Exception e) {
++            return "boot";
++        }
++    }
++
++    private static Uri source(Context ctx) {
++        File dir = Config.dir(ctx);
++        if (dir != null) {
++            for (String name : OWN_FILES) {
++                File f = new File(dir, name);
++                if (f.isFile() && f.canRead() && f.length() > 0) return Uri.fromFile(f);
++            }
++        }
++        return Uri.parse("android.resource://" + ctx.getPackageName() + "/" + R.raw.arche_startup);
++    }
++
++    private static void play(Context ctx) {
++        final MediaPlayer mp = new MediaPlayer();
++        final Handler h = new Handler(Looper.getMainLooper());
++        final boolean[] released = {false};
++        final Runnable release = () -> {
++            if (released[0]) return;
++            released[0] = true;
++            try { mp.stop(); } catch (RuntimeException ignored) { }
++            mp.release();
++        };
++        try {
++            mp.setAudioAttributes(new AudioAttributes.Builder()
++                    .setUsage(AudioAttributes.USAGE_MEDIA)
++                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
++                    .build());
++            mp.setDataSource(ctx, source(ctx));
++            mp.setOnPreparedListener(p -> {
++                p.start();
++                h.postDelayed(release, MAX_MS);
++            });
++            mp.setOnCompletionListener(p -> { h.removeCallbacks(release); release.run(); });
++            mp.setOnErrorListener((p, what, extra) -> { h.removeCallbacks(release); release.run(); return true; });
++            mp.prepareAsync();
++        } catch (Exception e) {
++            release.run();
++        }
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java b/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java
+index 18fded94..9a657f0d 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java
+@@ -18,8 +18,13 @@ final class ThemeFiles {
+         if (segments.size() == 1) {
+             String name = segments.get(0);
+             return Config.FILE_NAME.equals(name) || "wallpaper.jpg".equals(name) || "theme_revision".equals(name)
++                    || StartupSound.isOwnFile(name)
+                     ? name : null;
+         }
++        // Arche fork: the per-app pictures (VibePlayer).
++        if (segments.size() == 2 && VibePlayer.DIR.equals(segments.get(0)) && collectionImage(segments.get(1))) {
++            return VibePlayer.DIR + "/" + segments.get(1);
++        }
+         if (segments.size() == 2 && WALLPAPERS.equals(segments.get(0))
+                 && (collectionImage(segments.get(1)) || WallpaperCaptions.FILE_NAME.equals(segments.get(1)))) {
+             return WALLPAPERS + "/" + segments.get(1);
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/VibePlayer.java b/launcher/app/src/main/java/com/gathin/tvhome/VibePlayer.java
+new file mode 100644
+index 00000000..e382173b
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/VibePlayer.java
+@@ -0,0 +1,207 @@
++package com.gathin.tvhome;
++
++import android.content.Context;
++import android.graphics.Bitmap;
++import android.graphics.BitmapFactory;
++import android.graphics.Canvas;
++import android.os.Handler;
++import android.os.Looper;
++import android.util.DisplayMetrics;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.FrameLayout;
++import android.widget.ImageView;
++
++import org.json.JSONObject;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++
++/**
++ * Arche fork: "vibes", a picture per app. Each app tile shows its own picture behind Home while it has
++ * the focus, so moving left or right through the dock changes the whole screen. The pictures are the
++ * owner's own files in the launcher's files folder, vibes/ (01.jpg, 02.jpg, ...), taken in name order:
++ * the first app gets the first picture, and so on, wrapping round when there are more apps than pictures.
++ * No vibes folder, or an empty one, leaves Home exactly as it was.
++ *
++ * Kept light for 1 GB TVs: one picture is decoded at a time, off the main thread, at screen size in
++ * RGB_565 (a hardware bitmap where the TV allows), only once the focus has rested for the delay, so
++ * scrolling fast decodes nothing in between; the picture it replaces is released after the crossfade.
++ *
++ * config.json keys: "vibe_dim" 0-90 (darkening painted into each picture, default 35, so names and the
++ * clock stay readable) and "vibe_delay_ms" 0-2000 (default 220).
++ */
++final class VibePlayer {
++    static final String DIR = "vibes";
++    private static final long FADE_MS = 260;
++
++    private final FrameLayout root;
++    private final ImageView front;
++    private final ImageView back;
++    private final List<File> files = new ArrayList<>();
++    private final ExecutorService decoder = Executors.newSingleThreadExecutor();
++    private final Handler main = new Handler(Looper.getMainLooper());
++    private final int width, height, dimColor;
++    private final long delayMs;
++    private Bitmap current;
++    private int shownIndex = -1;
++    private int wanted = -1;
++    private int generation;
++    private boolean closed;
++
++    /** {@code at}: the child index just above the theme's wallpaper view (0 when the theme draws none). */
++    VibePlayer(Context context, FrameLayout root, int at) {
++        this.root = root;
++        File dir = Config.dir(context);
++        File[] images = dir == null ? null : new File(dir, DIR).listFiles((d, name) -> ThemeFiles.collectionImage(name));
++        if (images != null) {
++            Arrays.sort(images, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
++            for (File f : images) if (f.isFile() && f.length() > 0) files.add(f);
++        }
++        JSONObject json = readConfig(dir);
++        int dim = clamp(json == null ? 35 : json.optInt("vibe_dim", 35), 0, 90);
++        dimColor = dim > 0 ? (dim * 255 / 100) << 24 : 0;
++        delayMs = clamp(json == null ? 220 : json.optInt("vibe_delay_ms", 220), 0, 2000);
++        DisplayMetrics metrics = context.getResources().getDisplayMetrics();
++        width = metrics.widthPixels;
++        height = metrics.heightPixels;
++        back = makeImage(context);
++        front = makeImage(context);
++        if (!files.isEmpty()) {
++            // Just above the theme's wallpaper, under the sky, glow, grid and everything else.
++            at = Math.max(0, Math.min(at, root.getChildCount()));
++            root.addView(back, at, matchParent());
++            root.addView(front, at + 1, matchParent());
++        }
++    }
++
++    boolean enabled() {
++        return !files.isEmpty() && !closed;
++    }
++
++    /** A tile at this adapter position took the focus. */
++    void focus(int position) {
++        if (!enabled() || position < 0) return;
++        int index = position % files.size();
++        wanted = index;
++        if (index == shownIndex) return;
++        final int gen = ++generation;
++        main.removeCallbacksAndMessages(null);
++        main.postDelayed(() -> load(index, gen), shownIndex < 0 ? 0 : delayMs);
++    }
++
++    private void load(int index, int gen) {
++        if (closed || gen != generation) return;
++        File file = files.get(index);
++        decoder.execute(() -> {
++            Bitmap bitmap = decode(file);
++            main.post(() -> {
++                if (closed || gen != generation || index != wanted) {
++                    if (bitmap != null) bitmap.recycle();
++                    return;
++                }
++                if (bitmap == null) return;
++                show(bitmap, index);
++            });
++        });
++    }
++
++    private void show(Bitmap bitmap, int index) {
++        Bitmap old = current;
++        current = bitmap;
++        shownIndex = index;
++        // The old picture goes behind, the new one fades in over it; then the old one is released.
++        back.setImageDrawable(front.getDrawable());
++        back.setAlpha(1f);
++        front.animate().cancel();
++        front.setImageBitmap(bitmap);
++        front.setAlpha(0f);
++        front.animate().alpha(1f).setDuration(FADE_MS).withEndAction(() -> {
++            back.setImageDrawable(null);
++            if (old != null && old != current) main.postDelayed(old::recycle, 300);
++        }).start();
++        root.setBackground(null);
++    }
++
++    /** Home hidden and memory short: drop the picture; the next focus loads it again. */
++    void releaseForMemoryPressure() {
++        if (current == null) return;
++        generation++;
++        front.setImageDrawable(null);
++        back.setImageDrawable(null);
++        current = null;
++        shownIndex = -1;
++    }
++
++    void close() {
++        closed = true;
++        main.removeCallbacksAndMessages(null);
++        decoder.shutdownNow();
++    }
++
++    private Bitmap decode(File file) {
++        try {
++            BitmapFactory.Options options = new BitmapFactory.Options();
++            options.inJustDecodeBounds = true;
++            BitmapFactory.decodeFile(file.getPath(), options);
++            int w = options.outWidth, h = options.outHeight;
++            if (w <= 0 || h <= 0) return null;
++            int sample = WallpaperSize.sampleSize(w, h, width, height);
++            if (!WallpaperSize.accepted(w / sample, h / sample)) return null;
++            options.inJustDecodeBounds = false;
++            options.inSampleSize = sample;
++            options.inPreferredConfig = Bitmap.Config.RGB_565;
++            options.inMutable = dimColor != 0;
++            Bitmap decoded = BitmapFactory.decodeFile(file.getPath(), options);
++            if (decoded == null) return null;
++            if (dimColor != 0) new Canvas(decoded).drawColor(dimColor);
++            Bitmap gpu = decoded.copy(Bitmap.Config.HARDWARE, false);
++            if (gpu == null) return decoded;
++            decoded.recycle();
++            return gpu;
++        } catch (Exception | OutOfMemoryError failure) {
++            return null;
++        }
++    }
++
++    private static ImageView makeImage(Context context) {
++        ImageView image = new ImageView(context);
++        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
++        image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++        image.setFocusable(false);
++        return image;
++    }
++
++    private static FrameLayout.LayoutParams matchParent() {
++        return new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
++    }
++
++    private static int clamp(int v, int lo, int hi) {
++        return Math.max(lo, Math.min(hi, v));
++    }
++
++    /** config.json from the theme folder, or null. */
++    static JSONObject readConfig(File dir) {
++        if (dir == null) return null;
++        File f = new File(dir, Config.FILE_NAME);
++        if (!f.isFile() || f.length() > 512 * 1024) return null;
++        try (FileInputStream in = new FileInputStream(f)) {
++            byte[] b = new byte[(int) f.length()];
++            int off = 0;
++            while (off < b.length) {
++                int n = in.read(b, off, b.length - off);
++                if (n < 0) break;
++                off += n;
++            }
++            return new JSONObject(new String(b, 0, off, StandardCharsets.UTF_8));
++        } catch (Exception e) {
++            return null;
++        }
++    }
++}
+diff --git a/launcher/app/src/main/res/layout/activity_main.xml b/launcher/app/src/main/res/layout/activity_main.xml
+index c037d247..75bca69a 100644
+--- a/launcher/app/src/main/res/layout/activity_main.xml
++++ b/launcher/app/src/main/res/layout/activity_main.xml
+@@ -183,7 +183,7 @@
+                     android:singleLine="true"
+                     android:ellipsize="end"
+                     android:layout_marginStart="4dp"
+-                    android:textColor="#8CFFFFFF"
++                    android:textColor="#FFD4AF37"
+                     android:textSize="12sp"
+                     android:fontFamily="@string/font_medium"
+                     android:letterSpacing="0.22"
+diff --git a/launcher/app/src/main/res/values/config.xml b/launcher/app/src/main/res/values/config.xml
+index a9987423..c6926fa0 100644
+--- a/launcher/app/src/main/res/values/config.xml
++++ b/launcher/app/src/main/res/values/config.xml
+@@ -240,7 +240,7 @@
+     <string name="locale" translatable="false"></string>
+ 
+     <!-- A name after the greeting: "Mr. Trịnh" shows GOOD MORNING, MR. TRỊNH. Empty: the greeting alone. -->
+-    <string name="greeting_name" translatable="false"></string>
++    <string name="greeting_name" translatable="false">Archi</string>
+     <!-- The greeting above the clock ("Good evening"). false hides it. Can also be set with "show_greeting" in a theme. -->
+     <bool name="show_greeting">true</bool>
+     <!-- The date and the line between the clock and the date in the clock's full white instead of dimmed. Can also be
+diff --git a/launcher/app/src/main/res/values/strings.xml b/launcher/app/src/main/res/values/strings.xml
+index 635bced9..40d3186e 100644
+--- a/launcher/app/src/main/res/values/strings.xml
++++ b/launcher/app/src/main/res/values/strings.xml
+@@ -151,4 +151,6 @@
+     <!-- Cinematic top shelf (cinematic_home): the line under the focused dock app's name; %1$s is when it was
+          last opened, e.g. "5 minutes ago" or "yesterday, 9:40 pm". -->
+     <string name="last_opened">Last opened %1$s</string>
++    <!-- Arche fork: an AI tile whose assistant has no app on the TV and no browser to open its site. -->
++    <string name="arche_ai_needs_browser" translatable="false">To open %1$s, install a web browser on the TV, for example from the Play Store.</string>
+ </resources>
