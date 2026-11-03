@@ -33,6 +33,26 @@ own clip on your own TV (see "Your own sound" below).
    key, and Android won't install the Arche one over it. Remove it first with
    `adb uninstall com.gathin.tvhome`, or with "Undo everything" in the official app.
 
+## App symbols and AI tiles
+
+Each tile shows the app's own symbol (the icon from the app on your TV) on a glass card in the
+app's colour. A new TV starts like this; in the phone app, Look → More options → Tiles switches
+back to the apps' wide banners.
+
+Right after your entertainment apps comes a row of AI assistants: **Claude, ChatGPT, Gemini and
+Perplexity**. Each tile opens the assistant's app if it's installed on the TV; none of them has
+a TV app today, so it opens the website (claude.ai, chatgpt.com, gemini.google.com,
+perplexity.ai) in the TV's browser. Many Google TVs ship without a browser; if the tile says so,
+install one from the Play Store (for example "TV Bro"). The symbols are drawn in code: the
+assistant's initial on its colour, with a small spark.
+
+To choose your own list, add `"ai_tiles"` to the theme's `config.json`, one
+`"Name|package|https://site"` per tile (up to 8), or `[]` to hide the row:
+
+```json
+"ai_tiles": ["Claude|com.anthropic.claude|https://claude.ai", "Perplexity|ai.perplexity.app.android|https://www.perplexity.ai"]
+```
+
 ## Vibes: a picture per app
 
 Give every app its own picture. Move Left or Right through the dock and the whole background

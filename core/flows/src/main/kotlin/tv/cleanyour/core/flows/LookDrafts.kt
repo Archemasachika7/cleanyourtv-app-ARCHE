@@ -16,6 +16,7 @@ import tv.cleanyour.core.spec.Picture
 import tv.cleanyour.core.spec.PictureSource
 import tv.cleanyour.core.spec.StyleId
 import tv.cleanyour.core.spec.Theme
+import tv.cleanyour.core.spec.TilesChoice
 import tv.cleanyour.core.spec.ThemeSource
 import tv.cleanyour.core.store.Clock
 
@@ -104,8 +105,10 @@ internal class LookDrafts(
         val p = when {
             // Arche fork: a TV this phone never customised opens on the Doom picture in the Glass style (a
             // frosted-glass dock, round buttons, the focus ring and the glow in each app's own colour), so every
-            // app looks different when it has the focus. A TV below home screen 3.0 falls back to Classic below.
-            choice == null -> { chosen = false; LookParts(StyleId.GLASS, ARCHE_PICTURE, DockLayers.DEFAULT_COLUMNS) }
+            // app looks different when it has the focus; each tile is the app's own symbol on a card in its colour.
+            // A TV below home screen 3.0 falls back to Classic, without the symbol tiles, below.
+            choice == null -> { chosen = false; LookParts(StyleId.GLASS, ARCHE_PICTURE, DockLayers.DEFAULT_COLUMNS,
+                extras = LookExtras.DEFAULT.copy(tiles = TilesChoice.ICONS)) }
             !choice.isNew -> {
                 chosen = false
                 val id = choice.lookOn(today)?.takeIf { it in LegacyLooks.table } ?: HomeScreenMachine.DEFAULT_LOOK

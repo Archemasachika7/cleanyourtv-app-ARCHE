@@ -13,6 +13,242 @@ index 3ceec7b4..06ab1c58 100644
      }
  
      buildTypes {
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/AiTiles.java b/launcher/app/src/main/java/com/gathin/tvhome/AiTiles.java
+new file mode 100644
+index 00000000..fc75bddd
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/AiTiles.java
+@@ -0,0 +1,174 @@
++package com.gathin.tvhome;
++
++import android.content.ActivityNotFoundException;
++import android.content.ComponentName;
++import android.content.Context;
++import android.content.Intent;
++import android.graphics.Canvas;
++import android.graphics.ColorFilter;
++import android.graphics.LinearGradient;
++import android.graphics.Paint;
++import android.graphics.Path;
++import android.graphics.PixelFormat;
++import android.graphics.Rect;
++import android.graphics.RectF;
++import android.graphics.Shader;
++import android.graphics.Typeface;
++import android.graphics.drawable.Drawable;
++import android.net.Uri;
++import android.widget.Toast;
++
++import org.json.JSONArray;
++import org.json.JSONObject;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/**
++ * Arche fork: AI assistant tiles placed right after the entertainment apps in the dock. Each tile opens
++ * the assistant's Android app when it is on the TV, and its website in the TV's browser when it is not
++ * (most have no TV app). The launcher itself still never goes online: the browser or the app does.
++ *
++ * config.json "ai_tiles": a list of "Name|package|https://site" strings replaces the default four;
++ * [] turns the tiles off. Each tile's symbol is drawn in code (a monogram on the assistant's colour),
++ * so no artwork ships with the launcher.
++ */
++final class AiTiles {
++    static final String PREFIX = "ai-tile-";
++
++    static final class Spec {
++        final String name, pkg, url;
++        final int top, bottom;
++
++        Spec(String name, String pkg, String url, int top, int bottom) {
++            this.name = name;
++            this.pkg = pkg;
++            this.url = url;
++            this.top = top;
++            this.bottom = bottom;
++        }
++    }
++
++    private static final Spec[] DEFAULTS = {
++            new Spec("Claude", "com.anthropic.claude", "https://claude.ai", 0xFFE08A6A, 0xFFB4513A),
++            new Spec("ChatGPT", "com.openai.chatgpt", "https://chatgpt.com", 0xFF2FB592, 0xFF0D6E57),
++            new Spec("Gemini", "com.google.android.apps.bard", "https://gemini.google.com", 0xFF6F8BFF, 0xFF8B4FD8),
++            new Spec("Perplexity", "ai.perplexity.app.android", "https://www.perplexity.ai", 0xFF33A3B0, 0xFF17616B),
++    };
++
++    private static final int[][] PALETTE = {
++            {0xFFE0A15A, 0xFF9C5A1E}, {0xFF5AA8FF, 0xFF2A5DB8}, {0xFFC86BFF, 0xFF6E2AA8}, {0xFF5AE0A0, 0xFF1E8A5A},
++    };
++
++    private AiTiles() {}
++
++    /** The tiles to show, from config.json "ai_tiles" or the defaults. */
++    static List<Spec> specs(Context ctx) {
++        JSONObject json = VibePlayer.readConfig(Config.dir(ctx));
++        List<Spec> out = new ArrayList<>();
++        JSONArray list = json == null ? null : json.optJSONArray("ai_tiles");
++        if (list == null) {
++            for (Spec s : DEFAULTS) out.add(s);
++            return out;
++        }
++        for (int i = 0; i < list.length() && out.size() < 8; i++) {
++            String[] f = list.optString(i, "").split("\\|", -1);
++            if (f.length != 3) continue;
++            String name = f[0].trim(), pkg = f[1].trim(), url = f[2].trim();
++            if (name.isEmpty() || name.length() > 24 || !url.startsWith("https://")) continue;
++            Spec known = null;
++            for (Spec d : DEFAULTS) if (d.pkg.equals(pkg)) known = d;
++            int[] c = PALETTE[out.size() % PALETTE.length];
++            out.add(known != null ? new Spec(name, pkg, url, known.top, known.bottom) : new Spec(name, pkg, url, c[0], c[1]));
++        }
++        return out;
++    }
++
++    static ComponentName component(Context ctx, int index) {
++        return new ComponentName(ctx, PREFIX + index);
++    }
++
++    static boolean isTile(ComponentName c) {
++        return c != null && c.getClassName().startsWith(PREFIX);
++    }
++
++    /** Opens the assistant: its app when installed, else its site in the browser, else says what is missing. */
++    static void open(Context ctx, Spec s) {
++        if (!s.pkg.isEmpty()) {
++            Intent app = ctx.getPackageManager().getLeanbackLaunchIntentForPackage(s.pkg);
++            if (app == null) app = ctx.getPackageManager().getLaunchIntentForPackage(s.pkg);
++            if (app != null) {
++                try {
++                    ctx.startActivity(app.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++                    return;
++                } catch (RuntimeException ignored) {
++                    // fall through to the site
++                }
++            }
++        }
++        try {
++            ctx.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(s.url))
++                    .addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++        } catch (ActivityNotFoundException e) {
++            Toast.makeText(ctx, ctx.getString(R.string.arche_ai_needs_browser, s.name), Toast.LENGTH_LONG).show();
++        } catch (RuntimeException e) {
++            Toast.makeText(ctx, ctx.getString(R.string.cant_open, s.name), Toast.LENGTH_SHORT).show();
++        }
++    }
++
++    /** The tile's symbol: the assistant's initial on a rounded square in its colours, with a small spark. */
++    static Drawable symbol(Spec s) {
++        return new Symbol(s);
++    }
++
++    private static final class Symbol extends Drawable {
++        private final Spec spec;
++        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final Paint spark = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final RectF box = new RectF();
++        private final Path star = new Path();
++
++        Symbol(Spec spec) {
++            this.spec = spec;
++            text.setColor(0xFFFFFFFF);
++            text.setTextAlign(Paint.Align.CENTER);
++            text.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD));
++            spark.setColor(0xF2FFFFFF);
++        }
++
++        @Override
++        public void draw(Canvas canvas) {
++            Rect b = getBounds();
++            float size = Math.min(b.width(), b.height());
++            float left = b.exactCenterX() - size / 2f, top = b.exactCenterY() - size / 2f;
++            box.set(left, top, left + size, top + size);
++            fill.setShader(new LinearGradient(box.left, box.top, box.right, box.bottom, spec.top, spec.bottom, Shader.TileMode.CLAMP));
++            float r = size * 0.24f;
++            canvas.drawRoundRect(box, r, r, fill);
++            text.setTextSize(size * 0.56f);
++            String initial = spec.name.substring(0, 1).toUpperCase(java.util.Locale.ROOT);
++            float y = box.centerY() - (text.descent() + text.ascent()) / 2f;
++            canvas.drawText(initial, box.centerX() - size * 0.04f, y, text);
++            // A four-point spark in the top-right corner: the shared mark of an AI tile.
++            float cx = box.right - size * 0.2f, cy = box.top + size * 0.2f, o = size * 0.11f, i = size * 0.03f;
++            star.reset();
++            star.moveTo(cx, cy - o);
++            star.lineTo(cx + i, cy - i);
++            star.lineTo(cx + o, cy);
++            star.lineTo(cx + i, cy + i);
++            star.lineTo(cx, cy + o);
++            star.lineTo(cx - i, cy + i);
++            star.lineTo(cx - o, cy);
++            star.lineTo(cx - i, cy - i);
++            star.close();
++            canvas.drawPath(star, spark);
++        }
++
++        @Override public void setAlpha(int alpha) { fill.setAlpha(alpha); text.setAlpha(alpha); spark.setAlpha(alpha); }
++        @Override public void setColorFilter(ColorFilter cf) { fill.setColorFilter(cf); }
++        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
++        @Override public int getIntrinsicWidth() { return 192; }
++        @Override public int getIntrinsicHeight() { return 192; }
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java b/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
+index 3632d74b..0a7acbef 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
+@@ -64,7 +64,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+     }
+ 
+     static final class Entry {
+-        static final int APP = 0, HOME_SETTINGS = 1, CARD = 2, EMPTY = 3;
++        static final int APP = 0, HOME_SETTINGS = 1, CARD = 2, EMPTY = 3, WEB = 4;
+ 
+         final int kind;
+         final String label;
+@@ -78,6 +78,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+         int ambient;
+         /** uniform_tiles card fill, top and bottom colour; null until sampled from the icon. */
+         int[] backdrop;
++        /** Arche fork: the assistant a WEB tile opens (AiTiles); null for every other tile. */
++        AiTiles.Spec ai;
+ 
+         Entry(String label, ComponentName component, Drawable banner, Drawable icon) {
+             this(APP, label, component, banner, icon, null, 0);
+@@ -335,6 +337,22 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+             fresh.add(docked + i, new Entry(Entry.EMPTY, "", new ComponentName(ctx, "empty-dock-slot-" + i),
+                     null, null, null, 0));
+         }
++        // Arche fork: the AI assistant tiles, right after the dock's entertainment apps (AiTiles). Left out
++        // while reordering, so the saved order only ever holds real apps.
++        List<AiTiles.Spec> ai = reordering ? java.util.Collections.emptyList() : AiTiles.specs(ctx);
++        if (!ai.isEmpty()) {
++            int at = docked + emptySlots;
++            if (dockRow && fillDock) at = Math.max(at, Math.min(dockSize, fresh.size()));
++            int end = fresh.size();
++            if (end > 0 && fresh.get(end - 1).kind == Entry.HOME_SETTINGS) end--;
++            at = Math.min(at, end);
++            for (int i = 0; i < ai.size(); i++) {
++                AiTiles.Spec spec = ai.get(i);
++                Entry web = new Entry(Entry.WEB, spec.name, AiTiles.component(ctx, i), null, AiTiles.symbol(spec), null, spec.top);
++                web.ai = spec;
++                fresh.add(at + i, web);
++            }
++        }
+         items.clear();
+         items.addAll(fresh);
+         notifyDataSetChanged();
+@@ -509,6 +527,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+ 
+     /** Opens the tile's activity by explicit component, with no extras: a card can name nothing else. */
+     private void launch(Entry e) {
++        if (e.kind == Entry.WEB && e.ai != null) {
++            AiTiles.open(ctx, e.ai);
++            return;
++        }
+         if (e.kind == Entry.HOME_SETTINGS) {
+             ctx.startActivity(new Intent(ctx, HomeSettingsActivity.class)
+                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
 diff --git a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
 index a5acd794..f088a4f8 100644
 --- a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
@@ -454,3 +690,14 @@ index a9987423..c6926fa0 100644
      <!-- The greeting above the clock ("Good evening"). false hides it. Can also be set with "show_greeting" in a theme. -->
      <bool name="show_greeting">true</bool>
      <!-- The date and the line between the clock and the date in the clock's full white instead of dimmed. Can also be
+diff --git a/launcher/app/src/main/res/values/strings.xml b/launcher/app/src/main/res/values/strings.xml
+index 635bced9..40d3186e 100644
+--- a/launcher/app/src/main/res/values/strings.xml
++++ b/launcher/app/src/main/res/values/strings.xml
+@@ -151,4 +151,6 @@
+     <!-- Cinematic top shelf (cinematic_home): the line under the focused dock app's name; %1$s is when it was
+          last opened, e.g. "5 minutes ago" or "yesterday, 9:40 pm". -->
+     <string name="last_opened">Last opened %1$s</string>
++    <!-- Arche fork: an AI tile whose assistant has no app on the TV and no browser to open its site. -->
++    <string name="arche_ai_needs_browser" translatable="false">To open %1$s, install a web browser on the TV, for example from the Play Store.</string>
+ </resources>
