@@ -53,6 +53,40 @@ To choose your own list, add `"ai_tiles"` to the theme's `config.json`, one
 "ai_tiles": ["Claude|com.anthropic.claude|https://claude.ai", "Perplexity|ai.perplexity.app.android|https://www.perplexity.ai"]
 ```
 
+## Money tiles
+
+After the AI row come **Angel One** and **Groww**. Like the AI tiles, each opens the app when it's
+on the TV, and its website (angelone.in, groww.in) in the TV's browser when it isn't. Change the
+list with `"money_tiles"` in `config.json`, in the same `"Name|package|https://site"` form.
+
+**Logos:** an AI or money tile shows the app's real icon whenever that app is installed on the TV.
+Only a tile for an app that isn't installed falls back to the drawn letter symbol, because the
+launcher has no internet access to fetch a logo, and the brands' logo files aren't ours to
+ship in a public repo.
+
+## Arche settings and widgets
+
+On the TV, hold OK on **Settings** (or press it, with the launcher settings button on) to open
+**Launcher settings**, then choose **Arche extras**. Every extra has a switch there:
+
+| Switch | Starts |
+|---|---|
+| AI tiles (Claude, ChatGPT, Gemini, Perplexity) | On |
+| Money tiles (Angel One, Groww) | On |
+| Vibes: a picture per app | On |
+| Startup sound | On |
+| Widget: World clock (London, New York, Tokyo; change with `"world_clocks"` in `config.json`) | Off |
+| Widget: Calendar (day, date, week and day of the year) | Off |
+| Widget: Day (how much of today has gone, days to the weekend) | Off |
+| Widget: Line of the day (a short new line each day) | Off |
+
+The widgets sit side by side on the right, between the clock and the apps. They need no internet
+and update once a minute, only while Home is on screen.
+
+- **Return to default** puts every switch back the way it came.
+- **Original look** turns every extra off, for the plain Clean Your TV home screen.
+- To bring back the TV's own home screen, use **Undo everything** in the phone app.
+
 ## Vibes: a picture per app
 
 Give every app its own picture. Move Left or Right through the dock and the whole background
