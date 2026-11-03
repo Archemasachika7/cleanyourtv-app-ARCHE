@@ -14,10 +14,18 @@ index 3ceec7b4..06ab1c58 100644
  
      buildTypes {
 diff --git a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
-index a5acd794..f3870643 100644
+index a5acd794..f088a4f8 100644
 --- a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
 +++ b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
-@@ -390,6 +390,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+@@ -140,6 +140,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     private RecyclerView grid;
+     private FrameLayout root;
+     private WallpaperPlayer wallpaperPlayer;
++    private VibePlayer vibePlayer;
+     private GlassView glass;
+     private View ambient;
+     private TextView heroName;
+@@ -390,6 +391,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
          density = getResources().getDisplayMetrics().density;
          // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
          Config cfg = Config.load(this);
@@ -26,6 +34,39 @@ index a5acd794..f3870643 100644
          homeAppKeys = RemoteKeys.parseAppKeys(cfg.appKeys);
          appLibrarySelection = cfg.appLibrarySelection;
          libraryOkOpens = cfg.libraryOkOpens;
+@@ -432,6 +435,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         // the theme's background, so launch looks the same.
+         getWindow().setBackgroundDrawable(null);
+         wallpaperPlayer = new WallpaperPlayer(this, root, cfg);
++        // Arche fork: a picture per app from files/vibes/, changing as the focus moves (VibePlayer).
++        vibePlayer = new VibePlayer(this, root, cfg.wallpaperEnabled && !cfg.wallpapers.isEmpty() ? 1 : 0);
+         sky = findViewById(R.id.sky);
+         sky.setIntensity(cfg.skyIntensity);
+         glass = findViewById(R.id.glass);
+@@ -1197,6 +1202,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         heroArtCache.clear();
+         heroArtKey = null;
+         wallpaperPlayer.releaseForMemoryPressure();
++        if (vibePlayer != null) vibePlayer.releaseForMemoryPressure();
+         tileRefresh.invalidate();
+     }
+ 
+@@ -1215,6 +1221,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         super.onDestroy();
+         unregisterReceiver(packageReceiver);
+         wallpaperPlayer.close();
++        if (vibePlayer != null) vibePlayer.close();
+         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+         if (tim != null) tim.unregisterCallback(inputCallback);
+@@ -1624,6 +1631,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     @Override
+     public void onTileFocused(int position, View card) {
+         lastFocused = position;
++        if (vibePlayer != null) vibePlayer.focus(position);
+         lastFocusedKey = adapter.keyAt(position);
+         // Focus restored before the first layout (cold start): the tile has no size yet, and the glass
+         // would be sized to 2*pad. Run again once the tile is laid out.
 diff --git a/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java b/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java
 new file mode 100644
 index 00000000..afe67813
@@ -157,17 +198,236 @@ index 00000000..afe67813
 +    }
 +}
 diff --git a/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java b/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java
-index 18fded94..580f85a4 100644
+index 18fded94..9a657f0d 100644
 --- a/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java
 +++ b/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java
-@@ -18,6 +18,7 @@ final class ThemeFiles {
+@@ -18,8 +18,13 @@ final class ThemeFiles {
          if (segments.size() == 1) {
              String name = segments.get(0);
              return Config.FILE_NAME.equals(name) || "wallpaper.jpg".equals(name) || "theme_revision".equals(name)
 +                    || StartupSound.isOwnFile(name)
                      ? name : null;
          }
++        // Arche fork: the per-app pictures (VibePlayer).
++        if (segments.size() == 2 && VibePlayer.DIR.equals(segments.get(0)) && collectionImage(segments.get(1))) {
++            return VibePlayer.DIR + "/" + segments.get(1);
++        }
          if (segments.size() == 2 && WALLPAPERS.equals(segments.get(0))
+                 && (collectionImage(segments.get(1)) || WallpaperCaptions.FILE_NAME.equals(segments.get(1)))) {
+             return WALLPAPERS + "/" + segments.get(1);
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/VibePlayer.java b/launcher/app/src/main/java/com/gathin/tvhome/VibePlayer.java
+new file mode 100644
+index 00000000..e382173b
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/VibePlayer.java
+@@ -0,0 +1,207 @@
++package com.gathin.tvhome;
++
++import android.content.Context;
++import android.graphics.Bitmap;
++import android.graphics.BitmapFactory;
++import android.graphics.Canvas;
++import android.os.Handler;
++import android.os.Looper;
++import android.util.DisplayMetrics;
++import android.view.View;
++import android.view.ViewGroup;
++import android.widget.FrameLayout;
++import android.widget.ImageView;
++
++import org.json.JSONObject;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++
++/**
++ * Arche fork: "vibes", a picture per app. Each app tile shows its own picture behind Home while it has
++ * the focus, so moving left or right through the dock changes the whole screen. The pictures are the
++ * owner's own files in the launcher's files folder, vibes/ (01.jpg, 02.jpg, ...), taken in name order:
++ * the first app gets the first picture, and so on, wrapping round when there are more apps than pictures.
++ * No vibes folder, or an empty one, leaves Home exactly as it was.
++ *
++ * Kept light for 1 GB TVs: one picture is decoded at a time, off the main thread, at screen size in
++ * RGB_565 (a hardware bitmap where the TV allows), only once the focus has rested for the delay, so
++ * scrolling fast decodes nothing in between; the picture it replaces is released after the crossfade.
++ *
++ * config.json keys: "vibe_dim" 0-90 (darkening painted into each picture, default 35, so names and the
++ * clock stay readable) and "vibe_delay_ms" 0-2000 (default 220).
++ */
++final class VibePlayer {
++    static final String DIR = "vibes";
++    private static final long FADE_MS = 260;
++
++    private final FrameLayout root;
++    private final ImageView front;
++    private final ImageView back;
++    private final List<File> files = new ArrayList<>();
++    private final ExecutorService decoder = Executors.newSingleThreadExecutor();
++    private final Handler main = new Handler(Looper.getMainLooper());
++    private final int width, height, dimColor;
++    private final long delayMs;
++    private Bitmap current;
++    private int shownIndex = -1;
++    private int wanted = -1;
++    private int generation;
++    private boolean closed;
++
++    /** {@code at}: the child index just above the theme's wallpaper view (0 when the theme draws none). */
++    VibePlayer(Context context, FrameLayout root, int at) {
++        this.root = root;
++        File dir = Config.dir(context);
++        File[] images = dir == null ? null : new File(dir, DIR).listFiles((d, name) -> ThemeFiles.collectionImage(name));
++        if (images != null) {
++            Arrays.sort(images, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
++            for (File f : images) if (f.isFile() && f.length() > 0) files.add(f);
++        }
++        JSONObject json = readConfig(dir);
++        int dim = clamp(json == null ? 35 : json.optInt("vibe_dim", 35), 0, 90);
++        dimColor = dim > 0 ? (dim * 255 / 100) << 24 : 0;
++        delayMs = clamp(json == null ? 220 : json.optInt("vibe_delay_ms", 220), 0, 2000);
++        DisplayMetrics metrics = context.getResources().getDisplayMetrics();
++        width = metrics.widthPixels;
++        height = metrics.heightPixels;
++        back = makeImage(context);
++        front = makeImage(context);
++        if (!files.isEmpty()) {
++            // Just above the theme's wallpaper, under the sky, glow, grid and everything else.
++            at = Math.max(0, Math.min(at, root.getChildCount()));
++            root.addView(back, at, matchParent());
++            root.addView(front, at + 1, matchParent());
++        }
++    }
++
++    boolean enabled() {
++        return !files.isEmpty() && !closed;
++    }
++
++    /** A tile at this adapter position took the focus. */
++    void focus(int position) {
++        if (!enabled() || position < 0) return;
++        int index = position % files.size();
++        wanted = index;
++        if (index == shownIndex) return;
++        final int gen = ++generation;
++        main.removeCallbacksAndMessages(null);
++        main.postDelayed(() -> load(index, gen), shownIndex < 0 ? 0 : delayMs);
++    }
++
++    private void load(int index, int gen) {
++        if (closed || gen != generation) return;
++        File file = files.get(index);
++        decoder.execute(() -> {
++            Bitmap bitmap = decode(file);
++            main.post(() -> {
++                if (closed || gen != generation || index != wanted) {
++                    if (bitmap != null) bitmap.recycle();
++                    return;
++                }
++                if (bitmap == null) return;
++                show(bitmap, index);
++            });
++        });
++    }
++
++    private void show(Bitmap bitmap, int index) {
++        Bitmap old = current;
++        current = bitmap;
++        shownIndex = index;
++        // The old picture goes behind, the new one fades in over it; then the old one is released.
++        back.setImageDrawable(front.getDrawable());
++        back.setAlpha(1f);
++        front.animate().cancel();
++        front.setImageBitmap(bitmap);
++        front.setAlpha(0f);
++        front.animate().alpha(1f).setDuration(FADE_MS).withEndAction(() -> {
++            back.setImageDrawable(null);
++            if (old != null && old != current) main.postDelayed(old::recycle, 300);
++        }).start();
++        root.setBackground(null);
++    }
++
++    /** Home hidden and memory short: drop the picture; the next focus loads it again. */
++    void releaseForMemoryPressure() {
++        if (current == null) return;
++        generation++;
++        front.setImageDrawable(null);
++        back.setImageDrawable(null);
++        current = null;
++        shownIndex = -1;
++    }
++
++    void close() {
++        closed = true;
++        main.removeCallbacksAndMessages(null);
++        decoder.shutdownNow();
++    }
++
++    private Bitmap decode(File file) {
++        try {
++            BitmapFactory.Options options = new BitmapFactory.Options();
++            options.inJustDecodeBounds = true;
++            BitmapFactory.decodeFile(file.getPath(), options);
++            int w = options.outWidth, h = options.outHeight;
++            if (w <= 0 || h <= 0) return null;
++            int sample = WallpaperSize.sampleSize(w, h, width, height);
++            if (!WallpaperSize.accepted(w / sample, h / sample)) return null;
++            options.inJustDecodeBounds = false;
++            options.inSampleSize = sample;
++            options.inPreferredConfig = Bitmap.Config.RGB_565;
++            options.inMutable = dimColor != 0;
++            Bitmap decoded = BitmapFactory.decodeFile(file.getPath(), options);
++            if (decoded == null) return null;
++            if (dimColor != 0) new Canvas(decoded).drawColor(dimColor);
++            Bitmap gpu = decoded.copy(Bitmap.Config.HARDWARE, false);
++            if (gpu == null) return decoded;
++            decoded.recycle();
++            return gpu;
++        } catch (Exception | OutOfMemoryError failure) {
++            return null;
++        }
++    }
++
++    private static ImageView makeImage(Context context) {
++        ImageView image = new ImageView(context);
++        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
++        image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++        image.setFocusable(false);
++        return image;
++    }
++
++    private static FrameLayout.LayoutParams matchParent() {
++        return new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
++    }
++
++    private static int clamp(int v, int lo, int hi) {
++        return Math.max(lo, Math.min(hi, v));
++    }
++
++    /** config.json from the theme folder, or null. */
++    static JSONObject readConfig(File dir) {
++        if (dir == null) return null;
++        File f = new File(dir, Config.FILE_NAME);
++        if (!f.isFile() || f.length() > 512 * 1024) return null;
++        try (FileInputStream in = new FileInputStream(f)) {
++            byte[] b = new byte[(int) f.length()];
++            int off = 0;
++            while (off < b.length) {
++                int n = in.read(b, off, b.length - off);
++                if (n < 0) break;
++                off += n;
++            }
++            return new JSONObject(new String(b, 0, off, StandardCharsets.UTF_8));
++        } catch (Exception e) {
++            return null;
++        }
++    }
++}
 diff --git a/launcher/app/src/main/res/layout/activity_main.xml b/launcher/app/src/main/res/layout/activity_main.xml
 index c037d247..75bca69a 100644
 --- a/launcher/app/src/main/res/layout/activity_main.xml

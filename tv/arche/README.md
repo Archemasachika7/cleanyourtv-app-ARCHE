@@ -32,6 +32,30 @@ own clip on your own TV (see "Your own sound" below).
    key, and Android won't install the Arche one over it. Remove it first with
    `adb uninstall com.gathin.tvhome`, or with "Undo everything" in the official app.
 
+## Vibes: a picture per app
+
+Give every app its own picture. Move Left or Right through the dock and the whole background
+crossfades to that app's vibe: the first app gets the first picture, the second app the second,
+and so on, wrapping round when you have more apps than pictures.
+
+The pictures are your own files on your own TV and are never part of this repo. Name them in the
+order you want (`01-….jpg`, `02-….jpg`, …), about 1920x1080 and under 400 KB each, then:
+
+```bash
+tv/arche/push-vibes.sh <tv ip> path/to/vibes
+```
+
+To go back to the single wallpaper:
+
+```bash
+tv/arche/push-vibes.sh <tv ip> --clear
+```
+
+It stays light: one picture is decoded at a time, at screen size in 16-bit colour, and only once
+the focus has rested for 0.22 s, so scrolling fast through the dock decodes nothing in between.
+Each picture is darkened 35% so names and the clock stay readable. In the theme's `config.json`,
+`"vibe_dim"` (0 to 90) changes the darkening and `"vibe_delay_ms"` (0 to 2000) the wait.
+
 ## Your own sound
 
 Copy a short clip (under 15 s) to the TV as `startup_sound.ogg` (or `.mp3`, `.m4a`, `.wav`):
