@@ -51,7 +51,8 @@ object PinnedCurtain {
     const val VERSION_NAME = "0.1"
     const val SIZE = 65_955L
     const val SHA256 = "eb21e112c97121a3ed7f4db1c7fbf2169bc172a14bb3f8ca781079de4651662e"
-    const val SIGNER_SHA256 = PinnedLauncher.SIGNER_SHA256
+    // Arche fork: the upstream launcher key that signed the bundled curtain; the Arche launcher has its own key.
+    const val SIGNER_SHA256 = "576418154bec6505bfc709ccaa6ae85b6e09d98eb89f4a25147ca1b4b0505132"
 }
 
 // LauncherPin over the BlobStore's bundled asset. bundled() refuses an asset whose bytes are not the

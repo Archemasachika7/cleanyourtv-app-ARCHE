@@ -102,7 +102,10 @@ internal class LookDrafts(
         val today = clock.today()
         var chosen = true
         val p = when {
-            choice == null -> { chosen = false; LookParts(StyleId.CLASSIC, LookPicture.NONE_ID, DockLayers.DEFAULT_COLUMNS) }
+            // Arche fork: a TV this phone never customised opens on the Doom picture, with the focus ring
+            // and the glow in each app's own colour, so every app looks different when it has the focus.
+            choice == null -> { chosen = false; LookParts(StyleId.CLASSIC, ARCHE_PICTURE, DockLayers.DEFAULT_COLUMNS,
+                details = LookDetails(ring = true, glow = GlowChoice.SOFT)) }
             !choice.isNew -> {
                 chosen = false
                 val id = choice.lookOn(today)?.takeIf { it in LegacyLooks.table } ?: HomeScreenMachine.DEFAULT_LOOK
@@ -434,3 +437,6 @@ internal class LookDrafts(
         private const val SEE_THROUGH = "seeThrough"
     }
 }
+
+// Arche fork: the gallery picture a TV this phone never customised starts on (BundledThemeSource "doom").
+internal const val ARCHE_PICTURE = "doom"

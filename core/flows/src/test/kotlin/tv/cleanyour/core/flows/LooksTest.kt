@@ -412,7 +412,7 @@ class LooksTest {
     // new image bytes; the 0.4.0 ids keep working.
     @Test fun theGalleryHasEveryPictureWithItsColour() {
         val p = BundledThemeSource().pictures()
-        assertEquals(listOf("diwali", "aurora", "mist", "glass", "ruska", "curtains", "mountains", "lamp", "neon", "cobalt"), p.map { it.id })
+        assertEquals(listOf("doom", "diwali", "aurora", "mist", "glass", "ruska", "curtains", "mountains", "lamp", "neon", "cobalt"), p.map { it.id })
         assertEquals(listOf("Diwali", "Aurora", "Mist", "Navy", "Autumn lake", "Curtains", "Mountains", "Lamp light", "Neon", "Cobalt"), p.map { it.name })
         assertEquals(listOf(0x120809, 0x070A14, 0x0E1022, 0x090C14, 0x07080D, 0x07060A, 0x000000, 0x141210, 0x0B0614, 0x020611),
             p.map { it.backgroundArgb and 0xFFFFFF })

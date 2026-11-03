@@ -1,0 +1,196 @@
+diff --git a/launcher/app/build.gradle b/launcher/app/build.gradle
+index 3ceec7b4..06ab1c58 100644
+--- a/launcher/app/build.gradle
++++ b/launcher/app/build.gradle
+@@ -11,8 +11,8 @@ android {
+         applicationId providers.gradleProperty('launcherApplicationId').getOrElse('com.gathin.tvhome')
+         minSdk 26
+         targetSdk 34
+-        versionCode 9
+-        versionName '3.0'
++        versionCode 10
++        versionName '3.0-arche'
+     }
+ 
+     buildTypes {
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+index a5acd794..f3870643 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+@@ -390,6 +390,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         density = getResources().getDisplayMetrics().density;
+         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
+         Config cfg = Config.load(this);
++        // Arche fork: the startup sound, once per boot (StartupSound).
++        if (savedInstanceState == null) StartupSound.maybePlay(this);
+         homeAppKeys = RemoteKeys.parseAppKeys(cfg.appKeys);
+         appLibrarySelection = cfg.appLibrarySelection;
+         libraryOkOpens = cfg.libraryOkOpens;
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java b/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java
+new file mode 100644
+index 00000000..afe67813
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/StartupSound.java
+@@ -0,0 +1,124 @@
++package com.gathin.tvhome;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++import android.media.AudioAttributes;
++import android.media.MediaPlayer;
++import android.net.Uri;
++import android.os.Handler;
++import android.os.Looper;
++import android.provider.Settings;
++
++import org.json.JSONObject;
++
++import java.io.File;
++import java.io.FileInputStream;
++import java.nio.charset.StandardCharsets;
++
++/**
++ * Arche fork: a short sound when Home first comes up. It plays once per boot by default, so pressing
++ * Home again stays silent. A theme's config.json can set "startup_sound" to "boot" (the default),
++ * "always" (every time Home is created) or "off".
++ *
++ * Put your own clip in the launcher's files folder (startup_sound.ogg, .mp3, .m4a or .wav, through
++ * ThemeProvider or adb push) and it plays instead of the bundled one. Playback stops after
++ * MAX_MS, and the player is released as soon as it finishes, so nothing stays in memory afterwards.
++ */
++final class StartupSound {
++    static final String[] OWN_FILES = {"startup_sound.ogg", "startup_sound.mp3", "startup_sound.m4a", "startup_sound.wav"};
++    private static final String PREFS = "arche_startup_sound";
++    private static final String LAST_BOOT = "last_boot";
++    private static final long MAX_MS = 15_000L;
++
++    private static boolean playedThisProcess;
++
++    private StartupSound() {}
++
++    static boolean isOwnFile(String name) {
++        for (String f : OWN_FILES) if (f.equals(name)) return true;
++        return false;
++    }
++
++    /** Called from MainActivity.onCreate. Never throws: a broken clip leaves Home silent, never broken. */
++    static void maybePlay(Context ctx) {
++        try {
++            Context app = ctx.getApplicationContext();
++            String mode = mode(app);
++            if ("off".equals(mode)) return;
++            if (!"always".equals(mode)) {
++                int boot = Settings.Global.getInt(app.getContentResolver(), Settings.Global.BOOT_COUNT, -1);
++                SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
++                // BOOT_COUNT is missing on a few firmwares: then play once per launcher process start.
++                if (boot >= 0) {
++                    if (prefs.getInt(LAST_BOOT, -2) == boot) return;
++                    prefs.edit().putInt(LAST_BOOT, boot).apply();
++                } else if (playedThisProcess) {
++                    return;
++                }
++            }
++            playedThisProcess = true;
++            play(app);
++        } catch (RuntimeException e) {
++            // Sound is decoration: never let it take Home down.
++        }
++    }
++
++    private static String mode(Context ctx) {
++        File dir = Config.dir(ctx);
++        if (dir == null) return "boot";
++        File f = new File(dir, Config.FILE_NAME);
++        if (!f.isFile() || f.length() > 512 * 1024) return "boot";
++        try (FileInputStream in = new FileInputStream(f)) {
++            byte[] b = new byte[(int) f.length()];
++            int off = 0;
++            while (off < b.length) {
++                int n = in.read(b, off, b.length - off);
++                if (n < 0) break;
++                off += n;
++            }
++            String v = new JSONObject(new String(b, 0, off, StandardCharsets.UTF_8)).optString("startup_sound", "boot");
++            return v.trim().toLowerCase(java.util.Locale.ROOT);
++        } catch (Exception e) {
++            return "boot";
++        }
++    }
++
++    private static Uri source(Context ctx) {
++        File dir = Config.dir(ctx);
++        if (dir != null) {
++            for (String name : OWN_FILES) {
++                File f = new File(dir, name);
++                if (f.isFile() && f.canRead() && f.length() > 0) return Uri.fromFile(f);
++            }
++        }
++        return Uri.parse("android.resource://" + ctx.getPackageName() + "/" + R.raw.arche_startup);
++    }
++
++    private static void play(Context ctx) {
++        final MediaPlayer mp = new MediaPlayer();
++        final Handler h = new Handler(Looper.getMainLooper());
++        final boolean[] released = {false};
++        final Runnable release = () -> {
++            if (released[0]) return;
++            released[0] = true;
++            try { mp.stop(); } catch (RuntimeException ignored) { }
++            mp.release();
++        };
++        try {
++            mp.setAudioAttributes(new AudioAttributes.Builder()
++                    .setUsage(AudioAttributes.USAGE_MEDIA)
++                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
++                    .build());
++            mp.setDataSource(ctx, source(ctx));
++            mp.setOnPreparedListener(p -> {
++                p.start();
++                h.postDelayed(release, MAX_MS);
++            });
++            mp.setOnCompletionListener(p -> { h.removeCallbacks(release); release.run(); });
++            mp.setOnErrorListener((p, what, extra) -> { h.removeCallbacks(release); release.run(); return true; });
++            mp.prepareAsync();
++        } catch (Exception e) {
++            release.run();
++        }
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java b/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java
+index 18fded94..580f85a4 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/ThemeFiles.java
+@@ -18,6 +18,7 @@ final class ThemeFiles {
+         if (segments.size() == 1) {
+             String name = segments.get(0);
+             return Config.FILE_NAME.equals(name) || "wallpaper.jpg".equals(name) || "theme_revision".equals(name)
++                    || StartupSound.isOwnFile(name)
+                     ? name : null;
+         }
+         if (segments.size() == 2 && WALLPAPERS.equals(segments.get(0))
+diff --git a/launcher/app/src/main/res/layout/activity_main.xml b/launcher/app/src/main/res/layout/activity_main.xml
+index c037d247..75bca69a 100644
+--- a/launcher/app/src/main/res/layout/activity_main.xml
++++ b/launcher/app/src/main/res/layout/activity_main.xml
+@@ -183,7 +183,7 @@
+                     android:singleLine="true"
+                     android:ellipsize="end"
+                     android:layout_marginStart="4dp"
+-                    android:textColor="#8CFFFFFF"
++                    android:textColor="#FFD4AF37"
+                     android:textSize="12sp"
+                     android:fontFamily="@string/font_medium"
+                     android:letterSpacing="0.22"
+diff --git a/launcher/app/src/main/res/values/config.xml b/launcher/app/src/main/res/values/config.xml
+index a9987423..c6926fa0 100644
+--- a/launcher/app/src/main/res/values/config.xml
++++ b/launcher/app/src/main/res/values/config.xml
+@@ -240,7 +240,7 @@
+     <string name="locale" translatable="false"></string>
+ 
+     <!-- A name after the greeting: "Mr. Trịnh" shows GOOD MORNING, MR. TRỊNH. Empty: the greeting alone. -->
+-    <string name="greeting_name" translatable="false"></string>
++    <string name="greeting_name" translatable="false">Archi</string>
+     <!-- The greeting above the clock ("Good evening"). false hides it. Can also be set with "show_greeting" in a theme. -->
+     <bool name="show_greeting">true</bool>
+     <!-- The date and the line between the clock and the date in the clock's full white instead of dimmed. Can also be
