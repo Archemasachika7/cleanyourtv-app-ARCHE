@@ -5,7 +5,8 @@ This fork's own changes on top of Clean Your TV. On the TV home screen they give
 - **"GOOD MORNING, ARCHI"** (afternoon, evening, night as the clock moves) in gold above the clock.
 - **The Iron Monarch wallpaper**: an original hooded iron mask in emerald and gold, drawn in code
   (`tools/make_wallpaper.py`, 38 KB). It's the default picture for a TV this phone hasn't set up yet,
-  and you can pick it any time in the phone app under Look → Picture.
+  and you can pick it any time in the phone app under Look → Picture. A new TV starts in the
+  **Glass** style: a frosted-glass dock, round buttons in the top bar and a glowing focus ring.
 - **A different colour for every app**: the focus ring and the glow behind the dock take the focused
   app's own colour, so moving from Netflix to YouTube to Prime turns the glow red, then white, then
   blue. For a bigger change in "perspective", choose the **Spotlight** style in Look: the focused app's
