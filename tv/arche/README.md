@@ -36,7 +36,7 @@ own clip on your own TV (see "Your own sound" below).
 ## App symbols and AI tiles
 
 Each tile shows the app's own symbol (the icon from the app on your TV) on a glass card in the
-app's colour. A new TV starts like this; in the phone app, Look → More options → Tiles switches
+app's colour. A new TV starts like this; in the phone app, Look → More options → App tiles → "The app's own art" switches
 back to the apps' wide banners.
 
 Right after your entertainment apps comes a row of AI assistants: **Claude, ChatGPT, Gemini and
